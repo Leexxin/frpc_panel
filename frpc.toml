@@ -1,0 +1,4 @@
+[common]
+serverAddr = "your-frpc-server.com"
+serverPort = 7000
+

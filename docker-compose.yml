@@ -1,0 +1,24 @@
+version: '3.8'
+
+services:
+  frpc-panel:
+    build: .
+    container_name: frpc-panel
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    environment:
+      - NODE_ENV=production
+      - PORT=3001
+    volumes:
+      # 挂载 Docker socket，用于访问宿主机上的容器
+      - /var/run/docker.sock:/var/run/docker.sock
+      # 持久化面板配置
+      - ./data:/app/data
+
+volumes:
+  frpc-panel-config:
+
+networks:
+  frpc-network:
+    driver: bridge
