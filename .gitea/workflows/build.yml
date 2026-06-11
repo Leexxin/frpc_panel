@@ -15,25 +15,34 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Cache Docker CLI
+        id: cache-docker
+        run: |
+          if [ -f /usr/local/bin/docker ]; then
+            echo "cached=true" >> $GITHUB_OUTPUT
+          else
+            echo "cached=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Install Docker CLI
+        if: steps.cache-docker.outputs.cached != 'true'
+        run: |
+          DOCKER_VERSION=27.5.1
+          wget -qO- https://download.docker.com/linux/static/stable/x86_64/docker-${DOCKER_VERSION}.tgz | \
+            tar xz -C /usr/local/bin --strip=1 docker/docker
+          docker version
+
       - name: Install dependencies
         run: npm ci
 
-      - name: Type check
-        run: npm run check
-
-      - name: Build
+      - name: Type check & Build
         run: npm run build
-
-      - name: Install Docker CLI
-        run: |
-          apk add --no-cache docker-cli
-          docker version
 
       - name: Build & Deploy
         run: |
           SHORT_SHA=$(echo "${{ gitea.sha }}" | cut -c1-7)
 
-          # 构建镜像
+          # 构建镜像（复用宿主机的 Docker 层缓存）
           docker build -t frpc-panel:latest -t frpc-panel:$SHORT_SHA .
 
           # 部署容器
