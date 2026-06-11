@@ -10,8 +10,6 @@ jobs:
     runs-on: ubuntu-latest
     container:
       image: node:20-alpine
-      volumes:
-        - /var/run/docker.sock:/var/run/docker.sock
 
     steps:
       - name: Checkout code
