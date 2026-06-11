@@ -1,0 +1,13 @@
+[
+  {
+    "name": "iStore_frpc",
+    "connectionType": "remote_docker",
+    "config": {
+      "dockerHost": "tcp://192.168.1.110:2375",
+      "dockerContainerName": "frpc"
+    },
+    "id": "inst_1780311604336_ok5xdix1o",
+    "createdAt": 1780311604336,
+    "lastConnectedAt": 1780904247538
+  }
+]

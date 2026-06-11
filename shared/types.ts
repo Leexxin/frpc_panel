@@ -1,4 +1,3 @@
-
 export interface PortMapping {
   id: string;
   name: string;
@@ -7,7 +6,6 @@ export interface PortMapping {
   protocol: 'tcp' | 'udp';
   localIp?: string;
   status: 'active' | 'inactive';
-  // 扩展字段支持完整frpc配置
   type?: string;
   localIP?: string;
 }
@@ -16,7 +14,7 @@ export interface ServiceStatus {
   running: boolean;
   uptime?: number;
   version?: string;
-  deploymentType: 'binary' | 'docker';
+  deploymentType: 'binary' | 'docker' | 'ssh';
 }
 
 export interface ConfigFile {
@@ -33,8 +31,12 @@ export interface ApiResponse<T> {
 export interface FrpcConfig {
   frpcPath?: string;
   configPath?: string;
-  deploymentType: 'binary' | 'docker';
+  deploymentType: 'binary' | 'docker' | 'ssh';
   dockerContainerName?: string;
+  sshHost?: string;
+  sshPort?: number;
+  sshUser?: string;
+  sshKeyPath?: string;
   autoDetected: boolean;
 }
 
@@ -42,4 +44,46 @@ export interface LogEntry {
   timestamp: number;
   level: 'info' | 'warn' | 'error' | 'debug';
   message: string;
+}
+
+// 多实例管理相关
+
+export type ConnectionType = 'local_docker' | 'local_binary' | 'remote_ssh' | 'remote_docker';
+
+export interface FrpcInstance {
+  id: string;
+  name: string;
+  connectionType: ConnectionType;
+  config: ConnectionConfig;
+  createdAt: number;
+  lastConnectedAt?: number;
+}
+
+export interface ConnectionConfig {
+  // Docker 相关
+  dockerContainerName?: string;
+  dockerHost?: string; // 远程 Docker API 地址
+  
+  // 本地二进制相关
+  frpcPath?: string;
+  configPath?: string;
+  
+  // SSH 相关
+  sshHost?: string;
+  sshPort?: number;
+  sshUser?: string;
+  sshKeyPath?: string;
+  sshPassword?: string;
+  remoteFrpcPath?: string;
+  remoteConfigPath?: string;
+  remoteDockerContainerName?: string;
+}
+
+export interface InstanceStatus {
+  instanceId: string;
+  status: 'connected' | 'disconnected' | 'error';
+  serviceStatus?: ServiceStatus;
+  mappings?: PortMapping[];
+  error?: string;
+  lastUpdateAt: number;
 }

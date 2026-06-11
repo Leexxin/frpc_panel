@@ -1,15 +1,11 @@
 import { Link, useLocation } from 'react-router-dom'
-import { Activity, Server, Settings, FileText, Cog } from 'lucide-react'
+import { Layers } from 'lucide-react'
 
 export function Navbar() {
   const location = useLocation()
 
   const navItems = [
-    { path: '/', label: '仪表盘', icon: Activity },
-    { path: '/mappings', label: '端口映射', icon: Server },
-    { path: '/config', label: '配置文件', icon: FileText },
-    { path: '/logs', label: '服务日志', icon: Settings },
-    { path: '/settings', label: '系统设置', icon: Cog },
+    { path: '/instances', label: '多实例管理', icon: Layers },
   ]
 
   return (

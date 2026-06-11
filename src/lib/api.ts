@@ -1,5 +1,4 @@
-
-import { PortMapping, ServiceStatus, ConfigFile, ApiResponse, FrpcConfig, LogEntry } from '../../shared/types'
+import { PortMapping, ConfigFile, ApiResponse, LogEntry, FrpcInstance, ConnectionType, ConnectionConfig, InstanceStatus } from '../../shared/types'
 
 const API_BASE = '/api'
 
@@ -22,40 +21,45 @@ async function request<T>(endpoint: string, options?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  getStatus: () => request<ServiceStatus>('/status'),
-  startService: () => request<{ message: string }>('/service/start', { method: 'POST' }),
-  stopService: () => request<{ message: string }>('/service/stop', { method: 'POST' }),
-  restartService: () => request<{ message: string }>('/service/restart', { method: 'POST' }),
-
-  getPanelConfig: () => request<FrpcConfig>('/config/panel'),
-  setPanelConfig: (config: Partial<FrpcConfig>) => request<{ message: string }>('/config/panel', {
-    method: 'PUT',
-    body: JSON.stringify(config)
-  }),
-  detectConfig: () => request<{ frpcPath?: string; dockerContainer?: string }>('/config/detect', { method: 'POST' }),
-  getDockerContainers: () => request<{ name: string; image: string; status: string }[]>('/docker/containers'),
-
-  getLogs: (lines: number = 100) => request<LogEntry[]>(`/logs?lines=${lines}`),
-  clearLogs: () => request<{ message: string }>('/logs', { method: 'DELETE' }),
-
-  getMappings: () => request<PortMapping[]>('/mappings'),
-  addMapping: (mapping: Omit<PortMapping, 'status'>) =>
-    request<{ message: string }>('/mappings', {
+  // 实例管理 API
+  getInstances: () => request<FrpcInstance[]>('/instances'),
+  getInstancesStatus: () => request<InstanceStatus[]>('/instances/status'),
+  createInstance: (data: { name: string; connectionType: ConnectionType; config: ConnectionConfig }) =>
+    request<FrpcInstance>('/instances', {
       method: 'POST',
-      body: JSON.stringify(mapping),
+      body: JSON.stringify(data)
     }),
-  updateMapping: (id: string, mapping: Partial<Omit<PortMapping, 'id' | 'status'>>) =>
-    request<{ message: string }>(`/mappings/${id}`, {
+  updateInstance: (id: string, data: { name: string; connectionType: ConnectionType; config: ConnectionConfig }) =>
+    request<FrpcInstance>(`/instances/${id}`, {
       method: 'PUT',
-      body: JSON.stringify(mapping),
+      body: JSON.stringify(data)
     }),
-  deleteMapping: (id: string) =>
-    request<{ message: string }>(`/mappings/${id}`, { method: 'DELETE' }),
-
-  getConfig: () => request<ConfigFile>('/config'),
-  saveConfig: (content: string) =>
-    request<{ message: string }>('/config', {
-      method: 'PUT',
-      body: JSON.stringify({ content }),
-    }),
+  deleteInstance: (id: string) => request<{ message: string }>(`/instances/${id}`, { method: 'DELETE' }),
+  
+  // 单个实例操作
+  getInstanceStatus: (instanceId: string) => request<InstanceStatus>(`/instances/${instanceId}/status`),
+  startInstanceService: (instanceId: string) => request<{ message: string }>(`/instances/${instanceId}/service/start`, { method: 'POST' }),
+  stopInstanceService: (instanceId: string) => request<{ message: string }>(`/instances/${instanceId}/service/stop`, { method: 'POST' }),
+  restartInstanceService: (instanceId: string) => request<{ message: string }>(`/instances/${instanceId}/service/restart`, { method: 'POST' }),
+  getInstanceMappings: (instanceId: string) => request<PortMapping[]>(`/instances/${instanceId}/mappings`),
+  getInstanceConfig: (instanceId: string) => request<ConfigFile>(`/instances/${instanceId}/config`),
+  getInstanceLogs: (instanceId: string, lines?: number) => request<LogEntry[]>(`/instances/${instanceId}/logs?lines=${lines || 100}`),
+  getInstanceDockerContainers: (instanceId: string) => request<{ name: string; image: string; status: string }[]>(`/instances/${instanceId}/docker/containers`),
+  
+  // 实例操作
+  addInstanceMapping: (instanceId: string, mapping: Omit<PortMapping, 'status'>) => request<{ message: string }>(`/instances/${instanceId}/mappings`, {
+    method: 'POST',
+    body: JSON.stringify(mapping),
+  }),
+  updateInstanceMapping: (instanceId: string, mappingId: string, mapping: Partial<Omit<PortMapping, 'id' | 'status'>>) => request<{ message: string }>(`/instances/${instanceId}/mappings/${mappingId}`, {
+    method: 'PUT',
+    body: JSON.stringify(mapping),
+  }),
+  deleteInstanceMapping: (instanceId: string, mappingId: string) => request<{ message: string }>(`/instances/${instanceId}/mappings/${mappingId}`, {
+    method: 'DELETE',
+  }),
+  saveInstanceConfig: (instanceId: string, content: string) => request<{ message: string }>(`/instances/${instanceId}/config`, {
+    method: 'PUT',
+    body: JSON.stringify({ content }),
+  }),
 }

@@ -12,7 +12,7 @@ import path from 'path'
 import dotenv from 'dotenv'
 import { fileURLToPath } from 'url'
 import authRoutes from './routes/auth.js'
-import frpcRoutes from './routes/frpc.js'
+import instancesRoutes from './routes/instances.js'
 
 // for esm mode
 const __filename = fileURLToPath(import.meta.url)
@@ -27,6 +27,14 @@ app.use(cors())
 app.use(express.json({ limit: '10mb' }))
 app.use(express.urlencoded({ extended: true, limit: '10mb' }))
 
+// Disable caching for API routes
+app.use('/api', (req: Request, res: Response, next: NextFunction) => {
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate')
+  res.setHeader('Pragma', 'no-cache')
+  res.setHeader('Expires', '0')
+  next()
+})
+
 /**
  * Serve static files (frontend)
  */
@@ -37,7 +45,7 @@ app.use(express.static(distPath))
  * API Routes
  */
 app.use('/api/auth', authRoutes)
-app.use('/api', frpcRoutes)
+app.use('/api/instances', instancesRoutes)
 
 /**
  * health
