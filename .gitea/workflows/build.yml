@@ -1,5 +1,5 @@
 name: Build & Deploy
-run-name: Deploy ${{ gitea.sha.short }}
+run-name: Deploy ${{ gitea.sha }}
 
 on:
   push:
@@ -29,27 +29,24 @@ jobs:
           apk add --no-cache docker-cli
           docker version
 
-      - name: Build Docker image
+      - name: Build & Deploy
         run: |
-          docker build -t frpc-panel:latest -t frpc-panel:${{ gitea.sha.short }} .
+          SHORT_SHA=$(echo "${{ gitea.sha }}" | cut -c1-7)
 
-      - name: Deploy container
-        run: |
-          # 确保数据目录存在
+          # 构建镜像
+          docker build -t frpc-panel:latest -t frpc-panel:$SHORT_SHA .
+
+          # 部署容器
           mkdir -p /data/frpc-panel
-
-          # 停止并删除旧容器
           docker stop frpc-panel 2>/dev/null || true
           docker rm frpc-panel 2>/dev/null || true
-
-          # 启动新容器
           docker run -d \
             --name frpc-panel \
             --restart always \
             -p 3001:3001 \
             -v /var/run/docker.sock:/var/run/docker.sock \
             -v /data/frpc-panel:/app/data \
-            frpc-panel:${{ gitea.sha.short }}
+            frpc-panel:$SHORT_SHA
 
       - name: Verify deployment
         run: |
