@@ -1,17 +1,17 @@
-name: Build & Verify
-run-name: Build ${{ gitea.sha }}
+name: Build & Deploy
+run-name: Deploy ${{ gitea.sha.short }}
 
 on:
   push:
     branches: [main, dev]
-  pull_request:
-    branches: [main]
 
 jobs:
   build:
     runs-on: ubuntu-latest
     container:
       image: node:20-alpine
+      volumes:
+        - /var/run/docker.sock:/var/run/docker.sock
 
     steps:
       - name: Checkout code
@@ -26,5 +26,34 @@ jobs:
       - name: Build
         run: npm run build
 
-      - name: List build output
-        run: ls -la dist/
+      - name: Install Docker CLI
+        run: |
+          apk add --no-cache docker-cli
+          docker version
+
+      - name: Build Docker image
+        run: |
+          docker build -t frpc-panel:latest -t frpc-panel:${{ gitea.sha.short }} .
+
+      - name: Deploy container
+        run: |
+          # 确保数据目录存在
+          mkdir -p /data/frpc-panel
+
+          # 停止并删除旧容器
+          docker stop frpc-panel 2>/dev/null || true
+          docker rm frpc-panel 2>/dev/null || true
+
+          # 启动新容器
+          docker run -d \
+            --name frpc-panel \
+            --restart always \
+            -p 3001:3001 \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v /data/frpc-panel:/app/data \
+            frpc-panel:${{ gitea.sha.short }}
+
+      - name: Verify deployment
+        run: |
+          sleep 3
+          docker ps --filter name=frpc-panel --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
