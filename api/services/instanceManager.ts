@@ -72,6 +72,18 @@ export class InstanceManager {
     }
   }
 
+  // 清理所有适配器连接（用于进程退出时）
+  async disconnectAll(): Promise<void> {
+    for (const [id, adapter] of this.adapters.entries()) {
+      try {
+        await adapter.disconnect();
+      } catch (e) {
+        // ignore disconnect errors
+      }
+    }
+    this.adapters.clear();
+  }
+
   getAllInstances(): FrpcInstance[] {
     return Array.from(this.instances.values());
   }
@@ -95,6 +107,15 @@ export class InstanceManager {
   updateInstance(id: string, update: Partial<Omit<FrpcInstance, 'id' | 'createdAt'>>): FrpcInstance | null {
     const instance = this.instances.get(id);
     if (!instance) return null;
+    // 清理旧的适配器连接
+    const oldAdapter = this.adapters.get(id);
+    if (oldAdapter) {
+      try {
+        oldAdapter.disconnect();
+      } catch (e) {
+        // ignore disconnect errors
+      }
+    }
     const updated = { ...instance, ...update };
     this.instances.set(id, updated);
     this.saveInstances();
@@ -105,6 +126,15 @@ export class InstanceManager {
 
   deleteInstance(id: string): boolean {
     if (!this.instances.has(id)) return false;
+    // 清理适配器连接
+    const adapter = this.adapters.get(id);
+    if (adapter) {
+      try {
+        adapter.disconnect();
+      } catch (e) {
+        // ignore disconnect errors
+      }
+    }
     this.instances.delete(id);
     this.adapters.delete(id);
     this.statusCache.delete(id);
@@ -129,9 +159,13 @@ export class InstanceManager {
       return cached;
     }
 
-    const timeoutPromise = new Promise<InstanceStatus>((_, reject) =>
-      setTimeout(() => reject(new Error('Request timeout')), timeoutMs)
-    );
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      const timer = setTimeout(() => {
+        reject(new Error('Request timeout'));
+      }, timeoutMs);
+      // 存储 timer 引用以便后续清理
+      (timeoutPromise as any)._timer = timer;
+    });
 
     try {
       const adapter = this.getAdapter(instanceId);

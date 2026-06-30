@@ -383,10 +383,9 @@ ${mapping.remotePort ? `remotePort = ${mapping.remotePort}\n` : ''}
         // 先将内容保存到临时文件（用于本地，或者如果是远程则需要不同的方法）
         // 更好的方法是直接使用 docker exec 写入或者通过管道
         if (this.dockerHost) {
-          // 远程 Docker 的情况，使用 exec 写入
-          // 使用 printf 或 cat 来写入内容
-          const escapedContent = content.replace(/'/g, "'\\''");
-          await this.execDockerCmd(`exec ${this.containerName} sh -c 'printf "%s" '${escapedContent}' > ${containerPath}'`);
+          // 远程 Docker 的情况，使用 base64 编码写入内容
+          const base64Content = Buffer.from(content).toString('base64');
+          await this.execDockerCmd(`exec ${this.containerName} sh -c 'echo "${base64Content}" | base64 -d > ${containerPath}'`);
           return;
         } else {
           // 本地 Docker 的情况
@@ -404,8 +403,12 @@ ${mapping.remotePort ? `remotePort = ${mapping.remotePort}\n` : ''}
   }
 
   async getLogs(maxLines: number): Promise<LogEntry[]> {
-    return new Promise((resolve) => {
-      exec(this.buildDockerCmd(`logs --tail ${maxLines} ${this.containerName}`), (error, stdout, stderr) => {
+    return new Promise((resolve, reject) => {
+      exec(this.buildDockerCmd(`logs --tail ${maxLines} ${this.containerName}`), { timeout: 15000 }, (error, stdout, stderr) => {
+        if (error) {
+          reject(new Error(`Failed to get logs: ${error.message}`));
+          return;
+        }
         const entries: LogEntry[] = [];
         const output = stdout + stderr;
         output.split('\n').filter(line => line.trim()).forEach(line => {

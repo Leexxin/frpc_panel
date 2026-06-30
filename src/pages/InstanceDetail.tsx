@@ -108,7 +108,7 @@ export function InstanceDetail() {
   // Tab变化时加载相应数据
   useEffect(() => {
     if (!instanceId) return
-    
+
     if (activeTab === 'mappings') {
       fetchCurrentInstanceMappings(instanceId)
     } else if (activeTab === 'config') {
@@ -116,6 +116,7 @@ export function InstanceDetail() {
     } else if (activeTab === 'logs') {
       fetchCurrentInstanceLogs(instanceId)
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, instanceId])
 
   // 监听配置变化

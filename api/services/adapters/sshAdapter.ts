@@ -1,4 +1,4 @@
-import { Client, ClientChannel } from 'ssh2';
+import { Client, ClientChannel, type Channel } from 'ssh2';
 import { ConnectionConfig, PortMapping, ServiceStatus, LogEntry } from '../../../shared/types.js';
 import * as fs from 'fs';
 
@@ -83,7 +83,7 @@ export class SSHAdapter {
         reject(new Error(`SSH command timed out: ${command}`));
       }, 30000);
 
-      this.client.exec(command, (err: Error | undefined, channel?: ClientChannel) => {
+      this.client.exec(command, (err: Error | undefined, channel?: ClientChannel | Channel) => {
         if (err) {
           clearTimeout(timeout);
           reject(new Error(`SSH exec failed: ${err.message}`));
