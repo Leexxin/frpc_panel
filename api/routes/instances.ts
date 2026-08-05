@@ -1,9 +1,62 @@
 import { Router, type Request, type Response, type NextFunction } from 'express';
 import { InstanceManager } from '../services/instanceManager.js';
 import { FrpcInstance, ConnectionType, PortMapping, ServiceStatus, LogEntry, ConfigFile, ApiResponse } from '../../shared/types.js';
+import { logger } from '../utils/logger.js';
 
 const router = Router();
 const instanceManager = new InstanceManager();
+
+// 请求验证中间件
+function validateInstanceData(req: Request, res: Response, next: NextFunction): void {
+  const { name, connectionType, config } = req.body;
+
+  if (!name || typeof name !== 'string' || name.trim().length === 0) {
+    res.status(400).json({ success: false, error: 'Instance name is required' });
+    return;
+  }
+
+  if (!connectionType || !['local_docker', 'local_binary', 'remote_ssh', 'remote_docker'].includes(connectionType)) {
+    res.status(400).json({ success: false, error: 'Valid connectionType is required' });
+    return;
+  }
+
+  if (!config || typeof config !== 'object') {
+    res.status(400).json({ success: false, error: 'Config object is required' });
+    return;
+  }
+
+  // 根据连接类型验证必填字段
+  switch (connectionType) {
+    case 'local_docker':
+      if (!config.dockerContainerName || typeof config.dockerContainerName !== 'string') {
+        res.status(400).json({ success: false, error: 'dockerContainerName is required for local_docker' });
+        return;
+      }
+      break;
+    case 'remote_docker':
+      if (!config.dockerHost || typeof config.dockerHost !== 'string') {
+        res.status(400).json({ success: false, error: 'dockerHost is required for remote_docker' });
+        return;
+      }
+      if (!config.remoteDockerContainerName || typeof config.remoteDockerContainerName !== 'string') {
+        res.status(400).json({ success: false, error: 'remoteDockerContainerName is required for remote_docker' });
+        return;
+      }
+      break;
+    case 'remote_ssh':
+      if (!config.sshHost || typeof config.sshHost !== 'string') {
+        res.status(400).json({ success: false, error: 'sshHost is required for remote_ssh' });
+        return;
+      }
+      if (!config.sshUser || typeof config.sshUser !== 'string') {
+        res.status(400).json({ success: false, error: 'sshUser is required for remote_ssh' });
+        return;
+      }
+      break;
+  }
+
+  next();
+}
 
 // Get all instances
 router.get('/', (req: Request, res: Response, next: NextFunction): void => {
@@ -12,6 +65,7 @@ router.get('/', (req: Request, res: Response, next: NextFunction): void => {
     const response: ApiResponse<FrpcInstance[]> = { success: true, data: instances };
     res.json(response);
   } catch (error) {
+    logger.error('Failed to get instances', { error: (error as Error).message });
     next(error);
   }
 });
@@ -19,16 +73,18 @@ router.get('/', (req: Request, res: Response, next: NextFunction): void => {
 // Get status of all instances
 router.get('/status', async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const statuses = await instanceManager.getAllStatuses();
+    const forceRefresh = req.query.force === 'true';
+    const statuses = await instanceManager.getAllStatuses(forceRefresh);
     const response: ApiResponse<any[]> = { success: true, data: statuses };
     res.json(response);
   } catch (error) {
+    logger.error('Failed to get instance statuses', { error: (error as Error).message });
     next(error);
   }
 });
 
 // Create a new instance
-router.post('/', (req: Request, res: Response, next: NextFunction): void => {
+router.post('/', validateInstanceData, (req: Request, res: Response, next: NextFunction): void => {
   try {
     const { name, connectionType, config } = req.body;
     const instance = instanceManager.createInstance({
@@ -39,6 +95,7 @@ router.post('/', (req: Request, res: Response, next: NextFunction): void => {
     const response: ApiResponse<FrpcInstance> = { success: true, data: instance };
     res.json(response);
   } catch (error) {
+    logger.error('Failed to create instance', { error: (error as Error).message });
     next(error);
   }
 });
@@ -58,12 +115,13 @@ router.get('/:id', (req: Request, res: Response, next: NextFunction): void => {
     const response: ApiResponse<FrpcInstance> = { success: true, data: instance };
     res.json(response);
   } catch (error) {
+    logger.error('Failed to get instance', { error: (error as Error).message, instanceId: req.params.id });
     next(error);
   }
 });
 
 // Update an instance
-router.put('/:id', (req: Request, res: Response, next: NextFunction): void => {
+router.put('/:id', validateInstanceData, (req: Request, res: Response, next: NextFunction): void => {
   try {
     const { name, connectionType, config } = req.body;
     const instance = instanceManager.updateInstance(req.params.id, {
@@ -82,6 +140,7 @@ router.put('/:id', (req: Request, res: Response, next: NextFunction): void => {
     const response: ApiResponse<FrpcInstance> = { success: true, data: instance };
     res.json(response);
   } catch (error) {
+    logger.error('Failed to update instance', { error: (error as Error).message, instanceId: req.params.id });
     next(error);
   }
 });
@@ -104,6 +163,7 @@ router.delete('/:id', (req: Request, res: Response, next: NextFunction): void =>
     };
     res.json(response);
   } catch (error) {
+    logger.error('Failed to delete instance', { error: (error as Error).message, instanceId: req.params.id });
     next(error);
   }
 });
@@ -111,10 +171,12 @@ router.delete('/:id', (req: Request, res: Response, next: NextFunction): void =>
 // Instance status operations
 router.get('/:id/status', async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const status = await instanceManager.getInstanceStatus(req.params.id);
+    const forceRefresh = req.query.force === 'true';
+    const status = await instanceManager.getInstanceStatus(req.params.id, 8000, forceRefresh);
     const response: ApiResponse<any> = { success: true, data: status };
     res.json(response);
   } catch (error) {
+    logger.error('Failed to get instance status', { error: (error as Error).message, instanceId: req.params.id });
     next(error);
   }
 });
@@ -129,6 +191,7 @@ router.post('/:id/service/start', async (req: Request, res: Response, next: Next
     };
     res.json(response);
   } catch (error) {
+    logger.error('Failed to start service', { error: (error as Error).message, instanceId: req.params.id });
     next(error);
   }
 });
@@ -142,6 +205,7 @@ router.post('/:id/service/stop', async (req: Request, res: Response, next: NextF
     };
     res.json(response);
   } catch (error) {
+    logger.error('Failed to stop service', { error: (error as Error).message, instanceId: req.params.id });
     next(error);
   }
 });
@@ -155,6 +219,7 @@ router.post('/:id/service/restart', async (req: Request, res: Response, next: Ne
     };
     res.json(response);
   } catch (error) {
+    logger.error('Failed to restart service', { error: (error as Error).message, instanceId: req.params.id });
     next(error);
   }
 });
@@ -166,19 +231,35 @@ router.get('/:id/mappings', async (req: Request, res: Response, next: NextFuncti
     const response: ApiResponse<PortMapping[]> = { success: true, data: mappings };
     res.json(response);
   } catch (error) {
+    logger.error('Failed to get mappings', { error: (error as Error).message, instanceId: req.params.id });
     next(error);
   }
 });
 
 router.post('/:id/mappings', async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    await instanceManager.addMapping(req.params.id, req.body);
+    const { name, protocol, localPort, remotePort, localIp, localIP } = req.body;
+
+    if (!name || !protocol || !localPort) {
+      res.status(400).json({ success: false, error: 'name, protocol, and localPort are required' });
+      return;
+    }
+
+    await instanceManager.addMapping(req.params.id, {
+      id: name,
+      name,
+      protocol: protocol as 'tcp' | 'udp',
+      localPort: parseInt(localPort, 10),
+      remotePort: remotePort ? parseInt(remotePort, 10) : undefined,
+      localIp: localIp || localIP || '127.0.0.1',
+    });
     const response: ApiResponse<{ message: string }> = {
       success: true,
       data: { message: 'Mapping added' }
     };
     res.json(response);
   } catch (error) {
+    logger.error('Failed to add mapping', { error: (error as Error).message, instanceId: req.params.id });
     next(error);
   }
 });
@@ -192,6 +273,7 @@ router.put('/:id/mappings/:mappingId', async (req: Request, res: Response, next:
     };
     res.json(response);
   } catch (error) {
+    logger.error('Failed to update mapping', { error: (error as Error).message, instanceId: req.params.id, mappingId: req.params.mappingId });
     next(error);
   }
 });
@@ -205,6 +287,7 @@ router.delete('/:id/mappings/:mappingId', async (req: Request, res: Response, ne
     };
     res.json(response);
   } catch (error) {
+    logger.error('Failed to delete mapping', { error: (error as Error).message, instanceId: req.params.id, mappingId: req.params.mappingId });
     next(error);
   }
 });
@@ -220,19 +303,26 @@ router.get('/:id/config', async (req: Request, res: Response, next: NextFunction
     const response: ApiResponse<ConfigFile> = { success: true, data: config };
     res.json(response);
   } catch (error) {
+    logger.error('Failed to get config', { error: (error as Error).message, instanceId: req.params.id });
     next(error);
   }
 });
 
 router.put('/:id/config', async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    await instanceManager.writeConfig(req.params.id, req.body.content);
+    const { content } = req.body;
+    if (content === undefined) {
+      res.status(400).json({ success: false, error: 'content is required' });
+      return;
+    }
+    await instanceManager.writeConfig(req.params.id, content);
     const response: ApiResponse<{ message: string }> = {
       success: true,
       data: { message: 'Config saved' }
     };
     res.json(response);
   } catch (error) {
+    logger.error('Failed to write config', { error: (error as Error).message, instanceId: req.params.id });
     next(error);
   }
 });
@@ -245,6 +335,7 @@ router.get('/:id/logs', async (req: Request, res: Response, next: NextFunction):
     const response: ApiResponse<LogEntry[]> = { success: true, data: logs };
     res.json(response);
   } catch (error) {
+    logger.error('Failed to get logs', { error: (error as Error).message, instanceId: req.params.id });
     next(error);
   }
 });
@@ -256,6 +347,7 @@ router.get('/:id/docker/containers', async (req: Request, res: Response, next: N
     const response: ApiResponse<any[]> = { success: true, data: containers };
     res.json(response);
   } catch (error) {
+    logger.error('Failed to get docker containers', { error: (error as Error).message, instanceId: req.params.id });
     next(error);
   }
 });

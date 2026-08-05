@@ -10,11 +10,19 @@ services:
     environment:
       - NODE_ENV=production
       - PORT=3001
+      # 必填：设置管理员密码
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-changeme}
+      # 可选：自定义 JWT 密钥
+      - JWT_SECRET=${JWT_SECRET:-}
+      # 可选：自定义加密密钥（用于加密 SSH 密码等敏感数据）
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY:-}
     volumes:
       # 挂载 Docker socket，用于访问宿主机上的容器
       - /var/run/docker.sock:/var/run/docker.sock
       # 持久化面板配置
       - ./data:/app/data
+      # 持久化日志
+      - ./logs:/app/logs
 
 volumes:
   frpc-panel-config:

@@ -13,6 +13,8 @@ import dotenv from 'dotenv'
 import { fileURLToPath } from 'url'
 import authRoutes from './routes/auth.js'
 import instancesRoutes from './routes/instances.js'
+import { authMiddleware } from './middleware/auth.js'
+import { logger } from './utils/logger.js'
 
 // for esm mode
 const __filename = fileURLToPath(import.meta.url)
@@ -26,6 +28,20 @@ const app: express.Application = express()
 app.use(cors())
 app.use(express.json({ limit: '10mb' }))
 app.use(express.urlencoded({ extended: true, limit: '10mb' }))
+
+// Request logging middleware
+app.use((req: Request, res: Response, next: NextFunction) => {
+  const start = Date.now();
+  res.on('finish', () => {
+    const duration = Date.now() - start;
+    logger.info(`${req.method} ${req.path}`, {
+      status: res.statusCode,
+      duration: `${duration}ms`,
+      ip: req.ip,
+    });
+  });
+  next();
+});
 
 // Disable caching for API routes
 app.use('/api', (req: Request, res: Response, next: NextFunction) => {
@@ -43,9 +59,12 @@ app.use(express.static(distPath))
 
 /**
  * API Routes
+ * Auth routes are public
  */
 app.use('/api/auth', authRoutes)
-app.use('/api/instances', instancesRoutes)
+
+// All other API routes require authentication
+app.use('/api/instances', authMiddleware, instancesRoutes)
 
 /**
  * health
@@ -64,7 +83,12 @@ app.use(
  * error handler middleware
  */
 app.use((error: Error, req: Request, res: Response, next: NextFunction) => {
-  console.error('Server error:', error)
+  logger.error('Server error', {
+    error: error.message,
+    stack: error.stack,
+    path: req.path,
+    method: req.method,
+  });
   res.status(500).json({
     success: false,
     error: 'Server internal error',

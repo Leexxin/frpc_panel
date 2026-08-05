@@ -6,7 +6,7 @@ import { useNavigate } from 'react-router-dom'
 import { SkeletonCard } from '../components/Skeleton'
 import { ErrorToast } from '../components/ErrorToast'
 
-const POLL_INTERVAL = 5000 // 5秒刷新一次实例列表状态
+const POLL_INTERVAL = 3000 // 3秒刷新一次实例列表状态
 
 export function Instances() {
   const navigate = useNavigate()
@@ -146,16 +146,22 @@ export function Instances() {
   const handleStartInstance = async (instance: FrpcInstance) => {
     selectInstance(instance.id)
     await startSelectedInstanceService()
+    // 操作后立即刷新状态
+    await fetchInstancesStatus(true)
   }
 
   const handleStopInstance = async (instance: FrpcInstance) => {
     selectInstance(instance.id)
     await stopSelectedInstanceService()
+    // 操作后立即刷新状态
+    await fetchInstancesStatus(true)
   }
 
   const handleRestartInstance = async (instance: FrpcInstance) => {
     selectInstance(instance.id)
     await restartSelectedInstanceService()
+    // 操作后立即刷新状态
+    await fetchInstancesStatus(true)
   }
 
   const renderConfigFields = () => {

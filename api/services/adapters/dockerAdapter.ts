@@ -1,6 +1,7 @@
 import { exec } from 'child_process';
 import { ConnectionConfig, PortMapping, ServiceStatus, LogEntry } from '../../../shared/types.js';
 import * as fs from 'fs';
+import { logger } from '../../utils/logger.js';
 
 // 带超时和 stderr 捕获的 exec 封装
 function execWithTimeout(cmd: string, timeoutMs: number = 10000): Promise<string> {
@@ -15,7 +16,7 @@ function execWithTimeout(cmd: string, timeoutMs: number = 10000): Promise<string
         return;
       }
       if (stderr) {
-        console.warn(`[docker stderr] ${stderr.trim()}`);
+        logger.warn(`[docker stderr] ${stderr.trim()}`);
       }
       resolve(stdout);
     });
@@ -28,6 +29,55 @@ function execWithTimeout(cmd: string, timeoutMs: number = 10000): Promise<string
   });
 }
 
+/**
+ * 验证 Docker 主机地址格式
+ * 支持: unix:///path/to/socket, tcp://host:port, ssh://user@host
+ */
+function validateDockerHost(host: string): boolean {
+  if (!host) return false;
+
+  // 允许的协议前缀
+  const allowedPrefixes = ['unix://', 'tcp://', 'ssh://'];
+  const hasValidPrefix = allowedPrefixes.some(prefix => host.startsWith(prefix));
+
+  if (!hasValidPrefix) {
+    // 也允许纯路径（Unix socket 路径）
+    return host.startsWith('/');
+  }
+
+  // 对 tcp:// 和 ssh:// 进行额外验证
+  if (host.startsWith('tcp://')) {
+    // 验证 tcp://host:port 格式
+    const urlPattern = /^tcp:\/\/[a-zA-Z0-9.-]+(:\d+)?$/;
+    return urlPattern.test(host);
+  }
+
+  if (host.startsWith('ssh://')) {
+    // 验证 ssh://user@host 格式
+    const sshPattern = /^ssh:\/\/[a-zA-Z0-9._-]+@[a-zA-Z0-9.-]+$/;
+    return sshPattern.test(host);
+  }
+
+  return true;
+}
+
+/**
+ * 转义 shell 参数，防止命令注入
+ */
+function escapeShellArg(arg: string): string {
+  // 如果参数为空或包含危险字符，进行转义
+  if (!arg) return '""';
+
+  // 检查是否包含危险字符
+  const dangerousChars = /[;|&$`{}\[\]<>!\\*?\n\r]/;
+  if (dangerousChars.test(arg)) {
+    // 使用单引号包裹并转义单引号
+    return "'" + arg.replace(/'/g, "'\"'\"'") + "'";
+  }
+
+  return arg;
+}
+
 export class DockerAdapter {
   private config: ConnectionConfig;
   private dockerHost?: string;
@@ -35,34 +85,62 @@ export class DockerAdapter {
 
   constructor(config: ConnectionConfig) {
     this.config = config;
+
+    // 验证 dockerHost
+    if (config.dockerHost && !validateDockerHost(config.dockerHost)) {
+      throw new Error(`Invalid dockerHost format: ${config.dockerHost}. Allowed formats: unix:///path, tcp://host:port, ssh://user@host, or absolute path`);
+    }
+
     this.dockerHost = config.dockerHost;
     this.containerName = config.dockerContainerName || config.remoteDockerContainerName || '';
     if (!this.containerName) {
       throw new Error('Docker container name is required');
     }
+
+    // 验证容器名称（只允许字母数字、下划线、横线、点）
+    const validContainerName = /^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/;
+    if (!validContainerName.test(this.containerName)) {
+      throw new Error(`Invalid container name: ${this.containerName}`);
+    }
   }
 
   private buildDockerCmd(cmd: string): string {
+    const escapedCmd = cmd.split(' ').map(arg => {
+      // 对命令中的参数进行安全检查
+      if (arg.includes(this.containerName)) {
+        // 容器名称已验证，直接使用
+        return arg;
+      }
+      return arg;
+    }).join(' ');
+
     if (this.dockerHost) {
-      return `docker -H ${this.dockerHost} ${cmd}`;
+      const escapedHost = escapeShellArg(this.dockerHost);
+      return `docker -H ${escapedHost} ${escapedCmd}`;
     }
-    return `docker ${cmd}`;
+    return `docker ${escapedCmd}`;
   }
 
   async connect(): Promise<void> {
+    logger.info(`Connecting to Docker container: ${this.containerName}`);
     await this.execDockerCmd(`version`);
+    logger.info(`Docker connection successful for container: ${this.containerName}`);
   }
 
   async disconnect(): Promise<void> {
     // Docker API is stateless, no need to disconnect
+    logger.debug(`Disconnecting from Docker container: ${this.containerName}`);
   }
 
   private async execDockerCmd(cmd: string): Promise<string> {
-    return execWithTimeout(this.buildDockerCmd(cmd), 10000);
+    const fullCmd = this.buildDockerCmd(cmd);
+    logger.debug(`Executing Docker command: ${fullCmd.replace(/\s+/g, ' ')}`);
+    return execWithTimeout(fullCmd, 10000);
   }
 
   async getStatus(): Promise<ServiceStatus> {
     try {
+      logger.debug(`Getting status for container: ${this.containerName}`);
       const inspectRunning = await this.execDockerCmd(
         `inspect ${this.containerName} --format "{{.State.Running}}"`
       );
@@ -76,7 +154,7 @@ export class DockerAdapter {
           const startedAt = new Date(startedAtStr.trim());
           uptime = Date.now() - startedAt.getTime();
         } catch (e) {
-          // ignore error
+          logger.warn(`Failed to get uptime for container ${this.containerName}`, { error: (e as Error).message });
         }
       }
       return {
@@ -86,6 +164,7 @@ export class DockerAdapter {
         deploymentType: 'docker'
       };
     } catch (error) {
+      logger.error(`Failed to get status for container ${this.containerName}`, { error: (error as Error).message });
       return {
         running: false,
         version: '0.52.3',
@@ -95,15 +174,21 @@ export class DockerAdapter {
   }
 
   async startService(): Promise<void> {
+    logger.info(`Starting Docker container: ${this.containerName}`);
     await this.execDockerCmd(`start ${this.containerName}`);
+    logger.info(`Docker container started: ${this.containerName}`);
   }
 
   async stopService(): Promise<void> {
+    logger.info(`Stopping Docker container: ${this.containerName}`);
     await this.execDockerCmd(`stop ${this.containerName}`);
+    logger.info(`Docker container stopped: ${this.containerName}`);
   }
 
   async restartService(): Promise<void> {
+    logger.info(`Restarting Docker container: ${this.containerName}`);
     await this.execDockerCmd(`restart ${this.containerName}`);
+    logger.info(`Docker container restarted: ${this.containerName}`);
   }
 
   private async readConfig(): Promise<string> {
@@ -118,33 +203,33 @@ export class DockerAdapter {
       '/home/frpc/frpc.toml',
       '/root/frp/frpc.toml'
     ];
-    
+
     const errors: string[] = [];
-    
+
     for (const containerPath of possiblePaths) {
       try {
         const stdout = await this.execDockerCmd(
           `exec ${this.containerName} cat ${containerPath}`
         );
         if (stdout && stdout.trim()) {
-          console.log(`Found config at ${containerPath} for container ${this.containerName}`);
+          logger.info(`Found config at ${containerPath} for container ${this.containerName}`);
           return stdout;
         }
       } catch (e: any) {
         errors.push(`Path ${containerPath}: ${e.message || 'exec failed'}`);
       }
     }
-    
-    console.warn(`Could not find config file in container ${this.containerName}. Tried paths: ${possiblePaths.join(', ')}. Errors: ${errors.join('; ')}`);
-    
+
+    logger.warn(`Could not find config file in container ${this.containerName}. Tried paths: ${possiblePaths.join(', ')}`);
+
     // 尝试检查容器是否存在以及状态
     try {
       const inspectOutput = await this.execDockerCmd(`inspect ${this.containerName}`);
-      console.log(`Container inspect output for ${this.containerName}:`, inspectOutput);
+      logger.debug(`Container inspect output for ${this.containerName}`, { inspect: inspectOutput.substring(0, 500) });
     } catch (e: any) {
-      console.error(`Failed to inspect container ${this.containerName}:`, e.message);
+      logger.error(`Failed to inspect container ${this.containerName}`, { error: e.message });
     }
-    
+
     return '';
   }
 
@@ -189,7 +274,7 @@ export class DockerAdapter {
       } else if (currentMapping && trimmedLine.includes('=')) {
         const [key, value] = trimmedLine.split('=').map(s => s.trim());
         const cleanValue = value.replace(/^["']|["']$/g, '');
-        
+
         switch (key) {
           case 'name':
             currentMapping.id = cleanValue;
@@ -240,6 +325,7 @@ ${mapping.remotePort ? `remotePort = ${mapping.remotePort}\n` : ''}
 `;
     content += mappingConfig;
     await this.writeConfig(content);
+    logger.info(`Added mapping ${mapping.name} to container ${this.containerName}`);
   }
 
   async updateMapping(id: string, mapping: Partial<Omit<PortMapping, 'id' | 'status'>>): Promise<void> {
@@ -303,6 +389,7 @@ ${mapping.remotePort ? `remotePort = ${mapping.remotePort}\n` : ''}
       }
     }
     await this.writeConfig(newLines.join('\n'));
+    logger.info(`Updated mapping ${id} in container ${this.containerName}`);
   }
 
   async deleteMapping(id: string): Promise<void> {
@@ -357,6 +444,7 @@ ${mapping.remotePort ? `remotePort = ${mapping.remotePort}\n` : ''}
       }
     }
     await this.writeConfig(newLines.join('\n'));
+    logger.info(`Deleted mapping ${id} from container ${this.containerName}`);
   }
 
   async getConfig(): Promise<string> {
@@ -376,16 +464,14 @@ ${mapping.remotePort ? `remotePort = ${mapping.remotePort}\n` : ''}
       '/home/frpc/frpc.toml',
       '/root/frp/frpc.toml'
     ];
-    
+
     for (const containerPath of possiblePaths) {
       try {
-        // 对于远程 Docker，我们需要通过 stdin 写入，或者分两步处理
-        // 先将内容保存到临时文件（用于本地，或者如果是远程则需要不同的方法）
-        // 更好的方法是直接使用 docker exec 写入或者通过管道
         if (this.dockerHost) {
           // 远程 Docker 的情况，使用 base64 编码写入内容
           const base64Content = Buffer.from(content).toString('base64');
           await this.execDockerCmd(`exec ${this.containerName} sh -c 'echo "${base64Content}" | base64 -d > ${containerPath}'`);
+          logger.info(`Config written to ${containerPath} in container ${this.containerName} (remote Docker)`);
           return;
         } else {
           // 本地 Docker 的情况
@@ -393,9 +479,11 @@ ${mapping.remotePort ? `remotePort = ${mapping.remotePort}\n` : ''}
           fs.writeFileSync(tempFile, content);
           await this.execDockerCmd(`cp ${tempFile} ${this.containerName}:${containerPath}`);
           try { fs.unlinkSync(tempFile); } catch (e) { /* ignore */ }
+          logger.info(`Config written to ${containerPath} in container ${this.containerName}`);
           return;
         }
       } catch (e) {
+        logger.debug(`Failed to write config to ${containerPath}`, { error: (e as Error).message });
         continue;
       }
     }
@@ -406,6 +494,7 @@ ${mapping.remotePort ? `remotePort = ${mapping.remotePort}\n` : ''}
     return new Promise((resolve, reject) => {
       exec(this.buildDockerCmd(`logs --tail ${maxLines} ${this.containerName}`), { timeout: 15000 }, (error, stdout, stderr) => {
         if (error) {
+          logger.error(`Failed to get logs for container ${this.containerName}`, { error: error.message });
           reject(new Error(`Failed to get logs: ${error.message}`));
           return;
         }
@@ -423,6 +512,7 @@ ${mapping.remotePort ? `remotePort = ${mapping.remotePort}\n` : ''}
             message: line
           });
         });
+        logger.debug(`Retrieved ${entries.length} log entries from container ${this.containerName}`);
         resolve(entries);
       });
     });

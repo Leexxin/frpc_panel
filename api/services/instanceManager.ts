@@ -5,6 +5,8 @@ import { FrpcInstance, ConnectionConfig, InstanceStatus, PortMapping, ServiceSta
 import { DockerAdapter } from './adapters/dockerAdapter.js';
 import { SSHAdapter } from './adapters/sshAdapter.js';
 import { LocalAdapter } from './adapters/localAdapter.js';
+import { encrypt, decrypt, isEncrypted } from '../utils/crypto.js';
+import { logger } from '../utils/logger.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -32,6 +34,9 @@ export class InstanceManager {
   private instances: Map<string, FrpcInstance> = new Map();
   private adapters: Map<string, ConnectionAdapter> = new Map();
   private statusCache: Map<string, InstanceStatus> = new Map();
+  private lastStatusTime: Map<string, number> = new Map();
+  private readonly STATUS_CACHE_TTL = 3000; // 3秒缓存
+  private readonly FAST_STATUS_CACHE_TTL = 1000; // 快速检测模式1秒缓存
 
   constructor() {
     this.ensureDataDir();
@@ -46,27 +51,75 @@ export class InstanceManager {
 
   private loadInstances() {
     if (fs.existsSync(INSTANCES_FILE)) {
-      const data = JSON.parse(fs.readFileSync(INSTANCES_FILE, 'utf-8'));
-      data.forEach((instance: FrpcInstance) => {
-        this.instances.set(instance.id, instance);
-      });
+      try {
+        const data = JSON.parse(fs.readFileSync(INSTANCES_FILE, 'utf-8'));
+        data.forEach((instance: FrpcInstance) => {
+          // 解密敏感字段
+          instance.config = this.decryptSensitiveConfig(instance.config);
+          this.instances.set(instance.id, instance);
+        });
+        logger.info(`Loaded ${data.length} instances from storage`);
+      } catch (error) {
+        logger.error('Failed to load instances', { error: (error as Error).message });
+      }
     }
   }
 
   private saveInstances() {
-    const data = Array.from(this.instances.values());
-    fs.writeFileSync(INSTANCES_FILE, JSON.stringify(data, null, 2));
+    try {
+      const data = Array.from(this.instances.values()).map(instance => ({
+        ...instance,
+        // 加密敏感字段后保存
+        config: this.encryptSensitiveConfig(instance.config),
+      }));
+      fs.writeFileSync(INSTANCES_FILE, JSON.stringify(data, null, 2));
+      logger.debug('Instances saved to storage');
+    } catch (error) {
+      logger.error('Failed to save instances', { error: (error as Error).message });
+    }
+  }
+
+  /**
+   * 加密配置中的敏感字段
+   */
+  private encryptSensitiveConfig(config: ConnectionConfig): ConnectionConfig {
+    const encrypted = { ...config };
+    if (config.sshPassword && !isEncrypted(config.sshPassword)) {
+      encrypted.sshPassword = encrypt(config.sshPassword);
+      logger.debug('SSH password encrypted');
+    }
+    return encrypted;
+  }
+
+  /**
+   * 解密配置中的敏感字段
+   */
+  private decryptSensitiveConfig(config: ConnectionConfig): ConnectionConfig {
+    const decrypted = { ...config };
+    if (config.sshPassword && isEncrypted(config.sshPassword)) {
+      try {
+        decrypted.sshPassword = decrypt(config.sshPassword);
+      } catch (error) {
+        logger.error('Failed to decrypt SSH password', { error: (error as Error).message });
+      }
+    }
+    return decrypted;
   }
 
   private createAdapter(instance: FrpcInstance): ConnectionAdapter {
+    logger.debug(`Creating adapter for instance ${instance.id}, type: ${instance.connectionType}`);
+
+    // 解密配置给适配器使用
+    const config = this.decryptSensitiveConfig(instance.config);
+
     switch (instance.connectionType) {
       case 'local_docker':
       case 'remote_docker':
-        return new DockerAdapter(instance.config);
+        return new DockerAdapter(config);
       case 'remote_ssh':
-        return new SSHAdapter(instance.config);
+        return new SSHAdapter(config);
       case 'local_binary':
-        return new LocalAdapter(instance.config);
+        return new LocalAdapter(config);
       default:
         throw new Error('Unsupported connection type');
     }
@@ -74,9 +127,11 @@ export class InstanceManager {
 
   // 清理所有适配器连接（用于进程退出时）
   async disconnectAll(): Promise<void> {
+    logger.info('Disconnecting all adapters');
     for (const [id, adapter] of this.adapters.entries()) {
       try {
         await adapter.disconnect();
+        logger.debug(`Adapter disconnected for instance ${id}`);
       } catch (e) {
         // ignore disconnect errors
       }
@@ -101,6 +156,7 @@ export class InstanceManager {
     };
     this.instances.set(id, newInstance);
     this.saveInstances();
+    logger.info(`Instance created: ${id} (${instance.name})`);
     return newInstance;
   }
 
@@ -121,6 +177,7 @@ export class InstanceManager {
     this.saveInstances();
     // 清理旧的适配器
     this.adapters.delete(id);
+    logger.info(`Instance updated: ${id}`);
     return updated;
   }
 
@@ -138,11 +195,13 @@ export class InstanceManager {
     this.instances.delete(id);
     this.adapters.delete(id);
     this.statusCache.delete(id);
+    this.lastStatusTime.delete(id);
     this.saveInstances();
+    logger.info(`Instance deleted: ${id}`);
     return true;
   }
 
-  async getInstanceStatus(instanceId: string, timeoutMs: number = 8000): Promise<InstanceStatus> {
+  async getInstanceStatus(instanceId: string, timeoutMs: number = 8000, forceRefresh: boolean = false): Promise<InstanceStatus> {
     const instance = this.instances.get(instanceId);
     if (!instance) {
       return {
@@ -153,22 +212,32 @@ export class InstanceManager {
       };
     }
 
-    // 如果有缓存且时间较短，直接返回避免频繁执行耗时命令
+    // 检查缓存
     const cached = this.statusCache.get(instanceId);
-    if (cached && (Date.now() - cached.lastUpdateAt) < 3000) {
+    const lastTime = this.lastStatusTime.get(instanceId) || 0;
+    const cacheAge = Date.now() - lastTime;
+
+    // 如果不是强制刷新，且缓存有效，直接返回
+    if (!forceRefresh && cached && cacheAge < this.STATUS_CACHE_TTL) {
+      logger.debug(`Returning cached status for ${instanceId}, age: ${cacheAge}ms`);
       return cached;
     }
+
+    // 使用更短的超时进行快速检测
+    const actualTimeout = forceRefresh ? timeoutMs : Math.min(timeoutMs, 5000);
 
     const timeoutPromise = new Promise<never>((_, reject) => {
       const timer = setTimeout(() => {
         reject(new Error('Request timeout'));
-      }, timeoutMs);
+      }, actualTimeout);
       // 存储 timer 引用以便后续清理
       (timeoutPromise as any)._timer = timer;
     });
 
     try {
       const adapter = this.getAdapter(instanceId);
+      logger.debug(`Fetching fresh status for ${instanceId}`);
+
       const status = await Promise.race([
         (async () => {
           const serviceStatus = await adapter.getStatus();
@@ -177,6 +246,11 @@ export class InstanceManager {
         })(),
         timeoutPromise
       ]);
+
+      // 清理超时定时器
+      if ((timeoutPromise as any)._timer) {
+        clearTimeout((timeoutPromise as any)._timer);
+      }
 
       const result: InstanceStatus = {
         instanceId,
@@ -189,12 +263,24 @@ export class InstanceManager {
       instance.lastConnectedAt = Date.now();
       this.saveInstances();
       this.statusCache.set(instanceId, result);
+      this.lastStatusTime.set(instanceId, Date.now());
+
+      logger.debug(`Status updated for ${instanceId}: ${result.status}`);
       return result;
     } catch (error) {
       // 超时或失败时，尝试返回缓存的状态（如果有）
-      if (cached) {
+      if ((timeoutPromise as any)._timer) {
+        clearTimeout((timeoutPromise as any)._timer);
+      }
+
+      if (cached && cacheAge < this.STATUS_CACHE_TTL * 3) {
+        logger.warn(`Status fetch failed for ${instanceId}, returning stale cache`, {
+          error: (error as Error).message,
+          cacheAge: `${cacheAge}ms`,
+        });
         return cached;
       }
+
       const result: InstanceStatus = {
         instanceId,
         status: 'error' as const,
@@ -202,15 +288,19 @@ export class InstanceManager {
         lastUpdateAt: Date.now()
       };
       this.statusCache.set(instanceId, result);
+      this.lastStatusTime.set(instanceId, Date.now());
+
+      logger.error(`Status fetch failed for ${instanceId}`, { error: (error as Error).message });
       return result;
     }
   }
 
-  getAllStatuses(): Promise<InstanceStatus[]> {
+  getAllStatuses(forceRefresh: boolean = false): Promise<InstanceStatus[]> {
     const ids = Array.from(this.instances.keys());
+    logger.debug(`Fetching statuses for ${ids.length} instances, forceRefresh=${forceRefresh}`);
     return Promise.all(
       ids.map(id =>
-        this.getInstanceStatus(id, 8000).catch(err => ({
+        this.getInstanceStatus(id, 8000, forceRefresh).catch(err => ({
           instanceId: id,
           status: 'error' as const,
           error: err.message,
@@ -233,15 +323,24 @@ export class InstanceManager {
 
   // 代理方法
   async startService(instanceId: string): Promise<void> {
-    return this.getAdapter(instanceId).startService();
+    logger.info(`Starting service for instance ${instanceId}`);
+    await this.getAdapter(instanceId).startService();
+    // 强制刷新状态
+    await this.getInstanceStatus(instanceId, 5000, true);
   }
 
   async stopService(instanceId: string): Promise<void> {
-    return this.getAdapter(instanceId).stopService();
+    logger.info(`Stopping service for instance ${instanceId}`);
+    await this.getAdapter(instanceId).stopService();
+    // 强制刷新状态
+    await this.getInstanceStatus(instanceId, 5000, true);
   }
 
   async restartService(instanceId: string): Promise<void> {
-    return this.getAdapter(instanceId).restartService();
+    logger.info(`Restarting service for instance ${instanceId}`);
+    await this.getAdapter(instanceId).restartService();
+    // 强制刷新状态
+    await this.getInstanceStatus(instanceId, 5000, true);
   }
 
   async getMappings(instanceId: string): Promise<PortMapping[]> {
@@ -249,14 +348,17 @@ export class InstanceManager {
   }
 
   async addMapping(instanceId: string, mapping: Omit<PortMapping, 'status'>): Promise<void> {
+    logger.info(`Adding mapping to instance ${instanceId}`, { mapping: mapping.name });
     return this.getAdapter(instanceId).addMapping(mapping);
   }
 
   async updateMapping(instanceId: string, id: string, mapping: Partial<Omit<PortMapping, 'id' | 'status'>>): Promise<void> {
+    logger.info(`Updating mapping ${id} in instance ${instanceId}`);
     return this.getAdapter(instanceId).updateMapping(id, mapping);
   }
 
   async deleteMapping(instanceId: string, id: string): Promise<void> {
+    logger.info(`Deleting mapping ${id} from instance ${instanceId}`);
     return this.getAdapter(instanceId).deleteMapping(id);
   }
 
@@ -265,6 +367,7 @@ export class InstanceManager {
   }
 
   async writeConfig(instanceId: string, content: string): Promise<void> {
+    logger.info(`Writing config for instance ${instanceId}`);
     return this.getAdapter(instanceId).writeConfig(content);
   }
 

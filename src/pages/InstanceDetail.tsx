@@ -98,6 +98,15 @@ export function InstanceDetail() {
     }, POLL_INTERVAL)
   }
 
+  // activeTab 变化时重启轮询（因为日志轮询依赖 activeTab）
+  useEffect(() => {
+    if (instanceId) {
+      startPolling()
+    }
+    return () => stopPolling()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, instanceId])
+
   const stopPolling = () => {
     if (pollTimerRef.current) {
       clearInterval(pollTimerRef.current)

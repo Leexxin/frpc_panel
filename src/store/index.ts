@@ -22,7 +22,7 @@ interface FrpcStore {
 
   // 实例管理方法
   fetchInstances: () => Promise<void>
-  fetchInstancesStatus: () => Promise<void>
+  fetchInstancesStatus: (forceRefresh?: boolean) => Promise<void>
   createInstance: (data: { name: string; connectionType: ConnectionType; config: ConnectionConfig }) => Promise<void>
   updateInstance: (id: string, data: { name: string; connectionType: ConnectionType; config: ConnectionConfig }) => Promise<void>
   deleteInstance: (id: string) => Promise<void>
@@ -34,7 +34,7 @@ interface FrpcStore {
   restartSelectedInstanceService: () => Promise<void>
   
   // 单个实例详细操作
-  fetchCurrentInstanceStatus: (instanceId: string) => Promise<void>
+  fetchCurrentInstanceStatus: (instanceId: string, forceRefresh?: boolean) => Promise<void>
   fetchCurrentInstanceMappings: (instanceId: string) => Promise<void>
   fetchCurrentInstanceConfig: (instanceId: string) => Promise<void>
   fetchCurrentInstanceLogs: (instanceId: string) => Promise<void>
@@ -75,10 +75,10 @@ export const useFrpcStore = create<FrpcStore>()(
         }
       },
 
-      fetchInstancesStatus: async () => {
+      fetchInstancesStatus: async (forceRefresh?: boolean) => {
         set({ error: null })
         try {
-          const statuses = await api.getInstancesStatus()
+          const statuses = await api.getInstancesStatus(forceRefresh)
           set({ instancesStatus: statuses })
         } catch (error) {
           set({ error: (error as Error).message })
@@ -134,7 +134,8 @@ export const useFrpcStore = create<FrpcStore>()(
         set({ loading: true, error: null })
         try {
           await api.startInstanceService(selectedId)
-          await get().fetchInstancesStatus()
+          // 强制刷新状态以获取最新状态
+          await get().fetchInstancesStatus(true)
           await get().fetchCurrentInstanceStatus(selectedId)
           set({ loading: false })
         } catch (error) {
@@ -149,7 +150,8 @@ export const useFrpcStore = create<FrpcStore>()(
         set({ loading: true, error: null })
         try {
           await api.stopInstanceService(selectedId)
-          await get().fetchInstancesStatus()
+          // 强制刷新状态以获取最新状态
+          await get().fetchInstancesStatus(true)
           await get().fetchCurrentInstanceStatus(selectedId)
           set({ loading: false })
         } catch (error) {
@@ -164,7 +166,8 @@ export const useFrpcStore = create<FrpcStore>()(
         set({ loading: true, error: null })
         try {
           await api.restartInstanceService(selectedId)
-          await get().fetchInstancesStatus()
+          // 强制刷新状态以获取最新状态
+          await get().fetchInstancesStatus(true)
           await get().fetchCurrentInstanceStatus(selectedId)
           set({ loading: false })
         } catch (error) {
@@ -173,10 +176,10 @@ export const useFrpcStore = create<FrpcStore>()(
       },
       
       // 单个实例详细操作
-      fetchCurrentInstanceStatus: async (instanceId) => {
+      fetchCurrentInstanceStatus: async (instanceId, forceRefresh?: boolean) => {
         set({ error: null })
         try {
-          const status = await api.getInstanceStatus(instanceId)
+          const status = await api.getInstanceStatus(instanceId, forceRefresh)
           set({ currentInstanceStatus: status.serviceStatus || null })
         } catch (error) {
           set({ error: (error as Error).message })

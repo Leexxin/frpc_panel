@@ -1,5 +1,6 @@
 import { Link, useLocation } from 'react-router-dom'
-import { Layers } from 'lucide-react'
+import { Layers, LogOut } from 'lucide-react'
+import { auth } from '../lib/api'
 
 export function Navbar() {
   const location = useLocation()
@@ -15,7 +16,7 @@ export function Navbar() {
           <div className="flex items-center">
             <h1 className="text-xl font-bold">frpc 管理面板</h1>
           </div>
-          <div className="flex space-x-4">
+          <div className="flex items-center space-x-4">
             {navItems.map((item) => {
               const Icon = item.icon
               const isActive = location.pathname === item.path
@@ -34,6 +35,14 @@ export function Navbar() {
                 </Link>
               )
             })}
+            <button
+              onClick={() => auth.logout()}
+              className="flex items-center px-3 py-2 rounded-md text-sm font-medium text-white/80 hover:bg-white/10 hover:text-white transition-colors"
+              title="退出登录"
+            >
+              <LogOut className="w-4 h-4 mr-2" />
+              退出
+            </button>
           </div>
         </div>
       </div>
