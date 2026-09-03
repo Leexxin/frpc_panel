@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import { PortMapping, ServiceStatus, LogEntry, FrpcInstance, ConnectionType, ConnectionConfig, InstanceStatus } from '../../shared/types'
+import { PortMapping, ServiceStatus, LogEntry, FrpcInstance, ConnectionType, ConnectionConfig, InstanceStatus, DockerContainerInfo } from '../../shared/types'
 import { api } from '../lib/api'
 
 interface FrpcStore {
@@ -17,6 +17,7 @@ interface FrpcStore {
   currentInstanceMappings: PortMapping[]
   currentInstanceConfig: string
   currentInstanceLogs: LogEntry[]
+  currentDockerContainers: DockerContainerInfo[]
 
   clearError: () => void
 
@@ -38,6 +39,7 @@ interface FrpcStore {
   fetchCurrentInstanceMappings: (instanceId: string) => Promise<void>
   fetchCurrentInstanceConfig: (instanceId: string) => Promise<void>
   fetchCurrentInstanceLogs: (instanceId: string) => Promise<void>
+  discoverCurrentInstanceContainers: (instanceId: string, containerName?: string) => Promise<void>
   
   addCurrentInstanceMapping: (mapping: Omit<PortMapping, 'status'>) => Promise<void>
   updateCurrentInstanceMapping: (mappingId: string, mapping: Partial<Omit<PortMapping, 'id' | 'status'>>) => Promise<void>
@@ -61,6 +63,7 @@ export const useFrpcStore = create<FrpcStore>()(
       currentInstanceMappings: [],
       currentInstanceConfig: '',
       currentInstanceLogs: [],
+      currentDockerContainers: [],
 
       clearError: () => set({ error: null }),
 
@@ -213,6 +216,24 @@ export const useFrpcStore = create<FrpcStore>()(
           set({ currentInstanceLogs: logs })
         } catch (error) {
           set({ error: (error as Error).message })
+        }
+      },
+
+      discoverCurrentInstanceContainers: async (instanceId, containerName) => {
+        set({ loading: true, error: null })
+        try {
+          const result = await api.discoverInstanceDockerContainers(instanceId, containerName)
+          set({ currentDockerContainers: result.containers })
+          await get().fetchInstances()
+          await Promise.all([
+            get().fetchCurrentInstanceStatus(instanceId, true),
+            get().fetchCurrentInstanceMappings(instanceId),
+            get().fetchCurrentInstanceConfig(instanceId),
+            get().fetchCurrentInstanceLogs(instanceId),
+          ])
+          set({ loading: false })
+        } catch (error) {
+          set({ error: (error as Error).message, loading: false })
         }
       },
       

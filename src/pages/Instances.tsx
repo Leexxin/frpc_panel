@@ -78,7 +78,7 @@ export function Instances() {
       'local_docker': '本地 Docker',
       'local_binary': '本地二进制',
       'remote_docker': '远程 Docker',
-      'remote_ssh': '远程 SSH'
+      'remote_ssh': '远程服务器（SSH 自动探测）'
     }
     return labels[type]
   }
@@ -328,7 +328,34 @@ export function Instances() {
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">远程配置文件路径</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">SSH 密码（与私钥二选一）</label>
+              <input
+                type="password"
+                value={formData.config.sshPassword || ''}
+                onChange={(e) => setFormData({
+                  ...formData,
+                  config: { ...formData.config, sshPassword: e.target.value }
+                })}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="SSH 密码"
+                autoComplete="new-password"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">frpc 容器（可选）</label>
+              <input
+                type="text"
+                value={formData.config.remoteDockerContainerName || ''}
+                onChange={(e) => setFormData({
+                  ...formData,
+                  config: { ...formData.config, remoteDockerContainerName: e.target.value }
+                })}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="留空后保存时自动探测"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">容器内配置路径（可选）</label>
               <input
                 type="text"
                 value={formData.config.remoteConfigPath || ''}
@@ -337,9 +364,12 @@ export function Instances() {
                   config: { ...formData.config, remoteConfigPath: e.target.value }
                 })}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="/etc/frp/frpc.toml"
+                placeholder="留空后从容器启动参数和挂载自动识别"
               />
             </div>
+            <p className="text-sm text-gray-500">
+              保存服务器后会自动扫描 Docker，识别名称、镜像或启动命令中包含 frpc 的容器。
+            </p>
           </div>
         )
       default:
@@ -554,7 +584,7 @@ export function Instances() {
                     <option value="local_docker">本地 Docker</option>
                     <option value="local_binary">本地二进制</option>
                     <option value="remote_docker">远程 Docker</option>
-                    <option value="remote_ssh">远程 SSH</option>
+                    <option value="remote_ssh">远程服务器（SSH 自动探测）</option>
                   </select>
                 </div>
 

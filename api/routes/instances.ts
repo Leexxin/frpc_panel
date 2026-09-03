@@ -1,6 +1,6 @@
 import { Router, type Request, type Response, type NextFunction } from 'express';
 import { InstanceManager } from '../services/instanceManager.js';
-import { FrpcInstance, ConnectionType, PortMapping, ServiceStatus, LogEntry, ConfigFile, ApiResponse } from '../../shared/types.js';
+import { FrpcInstance, ConnectionType, PortMapping, LogEntry, ConfigFile, ApiResponse, DockerContainerInfo, DockerDiscoveryResult } from '../../shared/types.js';
 import { logger } from '../utils/logger.js';
 
 const router = Router();
@@ -52,6 +52,11 @@ function validateInstanceData(req: Request, res: Response, next: NextFunction): 
         res.status(400).json({ success: false, error: 'sshUser is required for remote_ssh' });
         return;
       }
+      if (config.remoteDockerContainerName &&
+          !/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(config.remoteDockerContainerName)) {
+        res.status(400).json({ success: false, error: 'Invalid remoteDockerContainerName' });
+        return;
+      }
       break;
   }
 
@@ -84,7 +89,7 @@ router.get('/status', async (req: Request, res: Response, next: NextFunction): P
 });
 
 // Create a new instance
-router.post('/', validateInstanceData, (req: Request, res: Response, next: NextFunction): void => {
+router.post('/', validateInstanceData, async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const { name, connectionType, config } = req.body;
     const instance = instanceManager.createInstance({
@@ -92,7 +97,22 @@ router.post('/', validateInstanceData, (req: Request, res: Response, next: NextF
       connectionType: connectionType as ConnectionType,
       config
     });
-    const response: ApiResponse<FrpcInstance> = { success: true, data: instance };
+    if (connectionType === 'remote_ssh') {
+      try {
+        await instanceManager.discoverDockerContainers(instance.id);
+      } catch (error) {
+        // The server definition is still useful when Docker is unavailable or no
+        // frpc container exists yet. Status/detail requests will expose the error.
+        logger.warn('Initial frpc container discovery failed', {
+          instanceId: instance.id,
+          error: (error as Error).message,
+        });
+      }
+    }
+    const response: ApiResponse<FrpcInstance> = {
+      success: true,
+      data: instanceManager.getInstance(instance.id) || instance,
+    };
     res.json(response);
   } catch (error) {
     logger.error('Failed to create instance', { error: (error as Error).message });
@@ -344,10 +364,26 @@ router.get('/:id/logs', async (req: Request, res: Response, next: NextFunction):
 router.get('/:id/docker/containers', async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const containers = await instanceManager.getDockerContainers(req.params.id);
-    const response: ApiResponse<any[]> = { success: true, data: containers };
+    const response: ApiResponse<DockerContainerInfo[]> = { success: true, data: containers };
     res.json(response);
   } catch (error) {
     logger.error('Failed to get docker containers', { error: (error as Error).message, instanceId: req.params.id });
+    next(error);
+  }
+});
+
+router.post('/:id/docker/discover', async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const selectedContainerName = req.body?.containerName;
+    if (selectedContainerName !== undefined && typeof selectedContainerName !== 'string') {
+      res.status(400).json({ success: false, error: 'containerName must be a string' });
+      return;
+    }
+    const result = await instanceManager.discoverDockerContainers(req.params.id, selectedContainerName);
+    const response: ApiResponse<DockerDiscoveryResult> = { success: true, data: result };
+    res.json(response);
+  } catch (error) {
+    logger.error('Failed to discover Docker containers', { error: (error as Error).message, instanceId: req.params.id });
     next(error);
   }
 });

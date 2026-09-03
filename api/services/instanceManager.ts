@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
-import { FrpcInstance, ConnectionConfig, InstanceStatus, PortMapping, ServiceStatus, LogEntry } from '../../shared/types.js';
+import { FrpcInstance, ConnectionConfig, InstanceStatus, PortMapping, ServiceStatus, LogEntry, DockerContainerInfo, DockerDiscoveryResult } from '../../shared/types.js';
 import { DockerAdapter } from './adapters/dockerAdapter.js';
 import { SSHAdapter } from './adapters/sshAdapter.js';
 import { LocalAdapter } from './adapters/localAdapter.js';
@@ -27,7 +27,7 @@ interface ConnectionAdapter {
   getConfig(): Promise<string>;
   writeConfig(content: string): Promise<void>;
   getLogs(maxLines: number): Promise<LogEntry[]>;
-  getDockerContainers?(): Promise<{ name: string; image: string; status: string }[]>;
+  getDockerContainers?(): Promise<DockerContainerInfo[]>;
 }
 
 export class InstanceManager {
@@ -140,11 +140,18 @@ export class InstanceManager {
   }
 
   getAllInstances(): FrpcInstance[] {
-    return Array.from(this.instances.values());
+    return Array.from(this.instances.values()).map(instance => this.toPublicInstance(instance));
   }
 
   getInstance(id: string): FrpcInstance | undefined {
-    return this.instances.get(id);
+    const instance = this.instances.get(id);
+    return instance ? this.toPublicInstance(instance) : undefined;
+  }
+
+  private toPublicInstance(instance: FrpcInstance): FrpcInstance {
+    const config = { ...instance.config };
+    delete config.sshPassword;
+    return { ...instance, config };
   }
 
   createInstance(instance: Omit<FrpcInstance, 'id' | 'createdAt'>): FrpcInstance {
@@ -172,13 +179,23 @@ export class InstanceManager {
         // ignore disconnect errors
       }
     }
-    const updated = { ...instance, ...update };
+    let nextConfig = update.config;
+    if (nextConfig) {
+      const passwordWasProvided = Object.prototype.hasOwnProperty.call(nextConfig, 'sshPassword');
+      nextConfig = { ...nextConfig };
+      if (!passwordWasProvided && instance.config.sshPassword) {
+        nextConfig.sshPassword = instance.config.sshPassword;
+      } else if (nextConfig.sshPassword === '') {
+        delete nextConfig.sshPassword;
+      }
+    }
+    const updated = { ...instance, ...update, ...(nextConfig ? { config: nextConfig } : {}) };
     this.instances.set(id, updated);
     this.saveInstances();
     // 清理旧的适配器
     this.adapters.delete(id);
     logger.info(`Instance updated: ${id}`);
-    return updated;
+    return this.toPublicInstance(updated);
   }
 
   deleteInstance(id: string): boolean {
@@ -375,11 +392,48 @@ export class InstanceManager {
     return this.getAdapter(instanceId).getLogs(maxLines);
   }
 
-  async getDockerContainers(instanceId: string): Promise<{ name: string; image: string; status: string }[]> {
+  async getDockerContainers(instanceId: string): Promise<DockerContainerInfo[]> {
     const adapter = this.getAdapter(instanceId);
     if (adapter.getDockerContainers) {
       return adapter.getDockerContainers();
     }
     return [];
+  }
+
+  async discoverDockerContainers(instanceId: string, selectedContainerName?: string): Promise<DockerDiscoveryResult> {
+    const instance = this.instances.get(instanceId);
+    if (!instance) throw new Error('Instance not found');
+    if (instance.connectionType !== 'remote_ssh') {
+      throw new Error('Docker auto-discovery is only available for remote SSH servers');
+    }
+
+    const adapter = this.getAdapter(instanceId);
+    if (!adapter.getDockerContainers) throw new Error('This connection does not support Docker discovery');
+    const containers = await adapter.getDockerContainers();
+    const selection = selectedContainerName || instance.config.remoteDockerContainerName || containers[0]?.name;
+
+    if (selection && !containers.some(container => container.name === selection)) {
+      throw new Error(`frpc container not found: ${selection}`);
+    }
+
+    if (selection && selection !== instance.config.remoteDockerContainerName) {
+      const selected = containers.find(container => container.name === selection);
+      instance.config = {
+        ...instance.config,
+        remoteDockerContainerName: selection,
+        remoteConfigPath: selectedContainerName
+          ? (selected?.configPath || instance.config.remoteConfigPath)
+          : (instance.config.remoteConfigPath || selected?.configPath),
+      };
+      this.instances.set(instanceId, instance);
+      this.saveInstances();
+      await adapter.disconnect();
+      this.adapters.delete(instanceId);
+      this.statusCache.delete(instanceId);
+      this.lastStatusTime.delete(instanceId);
+      logger.info(`Auto-selected frpc container ${selection} for instance ${instanceId}`);
+    }
+
+    return { containers, selectedContainerName: selection };
   }
 }

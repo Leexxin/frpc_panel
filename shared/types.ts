@@ -15,6 +15,8 @@ export interface ServiceStatus {
   uptime?: number;
   version?: string;
   deploymentType: 'binary' | 'docker' | 'ssh';
+  containerName?: string;
+  configPath?: string;
 }
 
 export interface ConfigFile {
@@ -77,6 +79,20 @@ export interface ConnectionConfig {
   remoteFrpcPath?: string;
   remoteConfigPath?: string;
   remoteDockerContainerName?: string;
+}
+
+export interface DockerContainerInfo {
+  name: string;
+  image: string;
+  status: string;
+  state?: string;
+  configPath?: string;
+  hostConfigPath?: string;
+}
+
+export interface DockerDiscoveryResult {
+  containers: DockerContainerInfo[];
+  selectedContainerName?: string;
 }
 
 export interface InstanceStatus {

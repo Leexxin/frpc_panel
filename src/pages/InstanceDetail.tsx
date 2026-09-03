@@ -25,12 +25,14 @@ export function InstanceDetail() {
     currentInstanceMappings,
     currentInstanceConfig,
     currentInstanceLogs,
+    currentDockerContainers,
     selectedInstanceId,
     selectInstance,
     fetchCurrentInstanceStatus,
     fetchCurrentInstanceMappings,
     fetchCurrentInstanceConfig,
     fetchCurrentInstanceLogs,
+    discoverCurrentInstanceContainers,
     startSelectedInstanceService,
     stopSelectedInstanceService,
     restartSelectedInstanceService,
@@ -40,6 +42,7 @@ export function InstanceDetail() {
     saveCurrentInstanceConfig,
     loading,
     error,
+    fetchInstances,
   } = useFrpcStore()
 
   const [activeTab, setActiveTab] = useState<TabId>('dashboard')
@@ -71,11 +74,11 @@ export function InstanceDetail() {
   useEffect(() => {
     if (!instanceId) return
     
-    // 设置选中的实例
-    selectInstance(instanceId)
-    
-    // 立即加载数据
-    loadAllData()
+    void (async () => {
+      await fetchInstances()
+      selectInstance(instanceId)
+      await loadAllData()
+    })()
     
     // 启动轮询
     startPolling()
@@ -137,12 +140,17 @@ export function InstanceDetail() {
 
   const loadAllData = async () => {
     if (instanceId) {
-      await Promise.all([
-        fetchCurrentInstanceStatus(instanceId),
-        fetchCurrentInstanceMappings(instanceId),
-        fetchCurrentInstanceConfig(instanceId),
-        fetchCurrentInstanceLogs(instanceId),
-      ])
+      const instance = useFrpcStore.getState().instances.find(item => item.id === instanceId)
+      if (instance?.connectionType === 'remote_ssh') {
+        await discoverCurrentInstanceContainers(instanceId)
+      } else {
+        await Promise.all([
+          fetchCurrentInstanceStatus(instanceId),
+          fetchCurrentInstanceMappings(instanceId),
+          fetchCurrentInstanceConfig(instanceId),
+          fetchCurrentInstanceLogs(instanceId),
+        ])
+      }
       setInitialLoading(false)
     }
   }
@@ -344,6 +352,45 @@ export function InstanceDetail() {
                     </button>
                   </div>
                 </div>
+                {currentInstance.connectionType === 'remote_ssh' && (
+                  <div className="bg-gray-50 rounded-lg p-6">
+                    <div className="flex items-center justify-between mb-4">
+                      <h3 className="text-lg font-semibold text-gray-900">frpc 容器</h3>
+                      <button
+                        onClick={() => instanceId && discoverCurrentInstanceContainers(instanceId)}
+                        disabled={loading}
+                        className="flex items-center px-3 py-2 text-sm text-blue-600 hover:bg-blue-50 rounded-lg disabled:opacity-50"
+                      >
+                        <RefreshCw className={`w-4 h-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
+                        重新探测
+                      </button>
+                    </div>
+                    {currentDockerContainers.length > 0 ? (
+                      <>
+                        <select
+                          value={currentInstance.config.remoteDockerContainerName || currentInstanceStatus?.containerName || ''}
+                          onChange={(event) => instanceId && discoverCurrentInstanceContainers(instanceId, event.target.value)}
+                          disabled={loading}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        >
+                          {currentDockerContainers.map((container) => (
+                            <option key={container.name} value={container.name}>
+                              {container.name} · {container.image} · {container.status}
+                            </option>
+                          ))}
+                        </select>
+                        <div className="mt-3 space-y-1 text-sm text-gray-600">
+                          <p>容器：{currentInstanceStatus?.containerName || currentInstance.config.remoteDockerContainerName}</p>
+                          <p>配置：{currentInstanceStatus?.configPath || currentInstance.config.remoteConfigPath || '自动识别'}</p>
+                        </div>
+                      </>
+                    ) : (
+                      <p className="text-sm text-amber-700 bg-amber-50 rounded-lg p-3">
+                        未在该服务器上发现 frpc 容器，将按远程二进制方式尝试管理。
+                      </p>
+                    )}
+                  </div>
+                )}
               </div>
 
               {/* 端口映射预览 */}
