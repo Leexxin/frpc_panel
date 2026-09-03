@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import { PortMapping, ServiceStatus, LogEntry, FrpcInstance, ConnectionType, ConnectionConfig, InstanceStatus, DockerContainerInfo } from '../../shared/types'
+import { PortMapping, ServiceStatus, LogEntry, FrpcInstance, ConnectionType, ConnectionConfig, InstanceStatus, DockerContainerInfo, CreateFrpcContainerInput } from '../../shared/types'
 import { api } from '../lib/api'
 
 interface FrpcStore {
@@ -10,6 +10,8 @@ interface FrpcStore {
   // 多实例管理
   instances: FrpcInstance[]
   instancesStatus: InstanceStatus[]
+  instanceDockerContainers: Record<string, DockerContainerInfo[]>
+  containerDiscoveryErrors: Record<string, string>
   selectedInstanceId: string | null
   
   // 当前选中实例的状态
@@ -24,6 +26,10 @@ interface FrpcStore {
   // 实例管理方法
   fetchInstances: () => Promise<void>
   fetchInstancesStatus: (forceRefresh?: boolean) => Promise<void>
+  fetchAllServerContainers: () => Promise<void>
+  selectInstanceContainer: (instanceId: string, containerName: string) => Promise<boolean>
+  operateInstanceContainer: (instanceId: string, containerName: string, action: 'start' | 'stop' | 'restart') => Promise<void>
+  createInstanceContainer: (instanceId: string, input: CreateFrpcContainerInput) => Promise<boolean>
   createInstance: (data: { name: string; connectionType: ConnectionType; config: ConnectionConfig }) => Promise<void>
   updateInstance: (id: string, data: { name: string; connectionType: ConnectionType; config: ConnectionConfig }) => Promise<void>
   deleteInstance: (id: string) => Promise<void>
@@ -56,6 +62,8 @@ export const useFrpcStore = create<FrpcStore>()(
       // 多实例管理
       instances: [],
       instancesStatus: [],
+      instanceDockerContainers: {},
+      containerDiscoveryErrors: {},
       selectedInstanceId: null,
       
       // 当前选中实例的状态
@@ -85,6 +93,76 @@ export const useFrpcStore = create<FrpcStore>()(
           set({ instancesStatus: statuses })
         } catch (error) {
           set({ error: (error as Error).message })
+        }
+      },
+
+      fetchAllServerContainers: async () => {
+        const servers = get().instances.filter(instance => instance.connectionType === 'remote_ssh')
+        if (!servers.length) {
+          set({ instanceDockerContainers: {}, containerDiscoveryErrors: {} })
+          return
+        }
+        const results = await Promise.all(servers.map(async (server) => {
+          try {
+            const containers = await api.getInstanceDockerContainers(server.id)
+            return { id: server.id, containers }
+          } catch (error) {
+            return { id: server.id, containers: [] as DockerContainerInfo[], error: (error as Error).message }
+          }
+        }))
+        const containers: Record<string, DockerContainerInfo[]> = {}
+        const errors: Record<string, string> = {}
+        results.forEach(result => {
+          containers[result.id] = result.containers
+          if (result.error) errors[result.id] = result.error
+        })
+        set({ instanceDockerContainers: containers, containerDiscoveryErrors: errors })
+      },
+
+      selectInstanceContainer: async (instanceId, containerName) => {
+        set({ loading: true, error: null })
+        try {
+          const result = await api.discoverInstanceDockerContainers(instanceId, containerName)
+          set(state => ({
+            currentDockerContainers: result.containers,
+            instanceDockerContainers: { ...state.instanceDockerContainers, [instanceId]: result.containers },
+            selectedInstanceId: instanceId,
+            loading: false,
+          }))
+          await get().fetchInstances()
+          return true
+        } catch (error) {
+          set({ error: (error as Error).message, loading: false })
+          return false
+        }
+      },
+
+      operateInstanceContainer: async (instanceId, containerName, action) => {
+        set({ loading: true, error: null, selectedInstanceId: instanceId })
+        try {
+          await api.discoverInstanceDockerContainers(instanceId, containerName)
+          if (action === 'start') await api.startInstanceService(instanceId)
+          if (action === 'stop') await api.stopInstanceService(instanceId)
+          if (action === 'restart') await api.restartInstanceService(instanceId)
+          await Promise.all([get().fetchInstances(), get().fetchInstancesStatus(true)])
+          await get().fetchAllServerContainers()
+          set({ loading: false })
+        } catch (error) {
+          set({ error: (error as Error).message, loading: false })
+        }
+      },
+
+      createInstanceContainer: async (instanceId, input) => {
+        set({ loading: true, error: null })
+        try {
+          await api.createInstanceDockerContainer(instanceId, input)
+          await Promise.all([get().fetchInstances(), get().fetchInstancesStatus(true)])
+          await get().fetchAllServerContainers()
+          set({ selectedInstanceId: instanceId, loading: false })
+          return true
+        } catch (error) {
+          set({ error: (error as Error).message, loading: false })
+          return false
         }
       },
 

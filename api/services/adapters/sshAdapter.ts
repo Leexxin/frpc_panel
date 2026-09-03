@@ -1,5 +1,5 @@
 import { Client, ClientChannel, type Channel } from 'ssh2';
-import { ConnectionConfig, DockerContainerInfo, LogEntry, PortMapping, ServiceStatus } from '../../../shared/types.js';
+import { ConnectionConfig, CreateFrpcContainerInput, DockerContainerInfo, LogEntry, PortMapping, ServiceStatus } from '../../../shared/types.js';
 import * as fs from 'fs';
 import * as path from 'path';
 import { logger } from '../../utils/logger.js';
@@ -26,7 +26,10 @@ interface DockerInspect {
   Mounts?: Array<{ Source?: string; Destination?: string }>;
 }
 
-interface ResolvedContainer extends DockerContainerInfo { running: boolean }
+interface ResolvedContainer extends DockerContainerInfo {
+  running: boolean;
+  startedAt?: string;
+}
 
 export class SSHAdapter {
   private client: Client | null = null;
@@ -123,7 +126,75 @@ export class SSHAdapter {
     return {
       name: (inspect.Name || name).replace(/^\//, ''), image: inspect.Config?.Image || '',
       status: inspect.State?.Status || (running ? 'running' : 'stopped'), state: inspect.State?.Status,
-      running, ...this.deriveConfigPaths(inspect),
+      running, startedAt: inspect.State?.StartedAt, ...this.deriveConfigPaths(inspect),
+    };
+  }
+
+  async createDockerContainer(input: CreateFrpcContainerInput): Promise<DockerContainerInfo> {
+    if (!validContainerName(input.name)) throw new Error('Invalid container name');
+    if (!/^[a-zA-Z0-9][a-zA-Z0-9._/@:-]*$/.test(input.image)) throw new Error('Invalid Docker image');
+    if (!input.serverAddr.trim() || /[\n\r\0]/.test(input.serverAddr)) throw new Error('Invalid FRP server address');
+    if (!Number.isInteger(input.serverPort) || input.serverPort < 1 || input.serverPort > 65535) {
+      throw new Error('FRP server port must be between 1 and 65535');
+    }
+    if (!input.hostConfigPath.startsWith('/') || /[\n\r\0]/.test(input.hostConfigPath)) {
+      throw new Error('Host config path must be an absolute path');
+    }
+    if (!input.containerConfigPath.startsWith('/') || /[\n\r\0]/.test(input.containerConfigPath)) {
+      throw new Error('Container config path must be an absolute path');
+    }
+    if (!['no', 'always', 'unless-stopped', 'on-failure'].includes(input.restartPolicy)) {
+      throw new Error('Invalid restart policy');
+    }
+
+    try {
+      await this.execCommand(`docker inspect ${shellEscape(input.name)} >/dev/null 2>&1`);
+      throw new Error(`Container already exists: ${input.name}`);
+    } catch (error) {
+      if ((error as Error).message.startsWith('Container already exists:')) throw error;
+    }
+
+    const configLines = [
+      `serverAddr = ${JSON.stringify(input.serverAddr.trim())}`,
+      `serverPort = ${input.serverPort}`,
+      'log.to = "console"',
+    ];
+    if (input.authToken) {
+      configLines.push('auth.method = "token"', `auth.token = ${JSON.stringify(input.authToken)}`);
+    }
+    const encodedConfig = Buffer.from(`${configLines.join('\n')}\n`, 'utf8').toString('base64');
+    const configDir = path.posix.dirname(input.hostConfigPath);
+    const createConfig = [
+      'set -eu',
+      `mkdir -p -- ${shellEscape(configDir)}`,
+      `if test -e ${shellEscape(input.hostConfigPath)}; then echo ${shellEscape(`Config already exists: ${input.hostConfigPath}`)} >&2; exit 17; fi`,
+      `printf %s ${shellEscape(encodedConfig)} | base64 -d > ${shellEscape(input.hostConfigPath)}`,
+    ].join('; ');
+    await this.execCommand(createConfig);
+
+    const mount = `${input.hostConfigPath}:${input.containerConfigPath}:rw`;
+    try {
+      await this.execCommand([
+        'docker run -d',
+        `--name ${shellEscape(input.name)}`,
+        `--restart ${shellEscape(input.restartPolicy)}`,
+        '--label frpc-panel.managed=true',
+        `-v ${shellEscape(mount)}`,
+        shellEscape(input.image),
+        '-c', shellEscape(input.containerConfigPath),
+      ].join(' '), 120000);
+    } catch (error) {
+      throw new Error(`Config created at ${input.hostConfigPath}, but Docker failed to create the container: ${(error as Error).message}`);
+    }
+
+    const container = await this.inspectContainer(input.name);
+    return {
+      name: container.name,
+      image: container.image,
+      status: container.status,
+      state: container.state,
+      configPath: container.configPath,
+      hostConfigPath: container.hostConfigPath,
     };
   }
 
@@ -193,15 +264,10 @@ export class SSHAdapter {
     const container = await this.resolveContainer();
     if (container) {
       const current = await this.inspectContainer(container.name);
-      let version = current.image;
-      if (current.running) {
-        try { version = (await this.execCommand(`docker exec ${shellEscape(current.name)} frpc --version`, 10000)).trim() || version; } catch { /* use image */ }
-      }
-      const inspect = JSON.parse(await this.execCommand(`docker inspect ${shellEscape(current.name)}`))[0] as DockerInspect;
-      const startedAt = inspect.State?.StartedAt ? new Date(inspect.State.StartedAt).getTime() : 0;
+      const startedAt = current.startedAt ? new Date(current.startedAt).getTime() : 0;
       return {
         running: current.running, uptime: current.running && startedAt ? Date.now() - startedAt : undefined,
-        version, deploymentType: 'docker', containerName: current.name, configPath: current.configPath,
+        version: current.image, deploymentType: 'docker', containerName: current.name, configPath: current.configPath,
       };
     }
     const processName = (this.config.remoteFrpcPath || 'frpc').split('/').pop() || 'frpc';

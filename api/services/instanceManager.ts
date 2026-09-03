@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
-import { FrpcInstance, ConnectionConfig, InstanceStatus, PortMapping, ServiceStatus, LogEntry, DockerContainerInfo, DockerDiscoveryResult } from '../../shared/types.js';
+import { FrpcInstance, ConnectionConfig, InstanceStatus, PortMapping, ServiceStatus, LogEntry, DockerContainerInfo, DockerDiscoveryResult, CreateFrpcContainerInput } from '../../shared/types.js';
 import { DockerAdapter } from './adapters/dockerAdapter.js';
 import { SSHAdapter } from './adapters/sshAdapter.js';
 import { LocalAdapter } from './adapters/localAdapter.js';
@@ -28,6 +28,7 @@ interface ConnectionAdapter {
   writeConfig(content: string): Promise<void>;
   getLogs(maxLines: number): Promise<LogEntry[]>;
   getDockerContainers?(): Promise<DockerContainerInfo[]>;
+  createDockerContainer?(input: CreateFrpcContainerInput): Promise<DockerContainerInfo>;
 }
 
 export class InstanceManager {
@@ -132,7 +133,7 @@ export class InstanceManager {
       try {
         await adapter.disconnect();
         logger.debug(`Adapter disconnected for instance ${id}`);
-      } catch (e) {
+      } catch {
         // ignore disconnect errors
       }
     }
@@ -175,7 +176,7 @@ export class InstanceManager {
     if (oldAdapter) {
       try {
         oldAdapter.disconnect();
-      } catch (e) {
+      } catch {
         // ignore disconnect errors
       }
     }
@@ -205,7 +206,7 @@ export class InstanceManager {
     if (adapter) {
       try {
         adapter.disconnect();
-      } catch (e) {
+      } catch {
         // ignore disconnect errors
       }
     }
@@ -243,12 +244,11 @@ export class InstanceManager {
     // 使用更短的超时进行快速检测
     const actualTimeout = forceRefresh ? timeoutMs : Math.min(timeoutMs, 5000);
 
+    let timeoutTimer: NodeJS.Timeout | undefined;
     const timeoutPromise = new Promise<never>((_, reject) => {
-      const timer = setTimeout(() => {
+      timeoutTimer = setTimeout(() => {
         reject(new Error('Request timeout'));
       }, actualTimeout);
-      // 存储 timer 引用以便后续清理
-      (timeoutPromise as any)._timer = timer;
     });
 
     try {
@@ -256,24 +256,17 @@ export class InstanceManager {
       logger.debug(`Fetching fresh status for ${instanceId}`);
 
       const status = await Promise.race([
-        (async () => {
-          const serviceStatus = await adapter.getStatus();
-          const mappings = await adapter.getMappings();
-          return { serviceStatus, mappings };
-        })(),
+        adapter.getStatus(),
         timeoutPromise
       ]);
 
       // 清理超时定时器
-      if ((timeoutPromise as any)._timer) {
-        clearTimeout((timeoutPromise as any)._timer);
-      }
+      if (timeoutTimer) clearTimeout(timeoutTimer);
 
       const result: InstanceStatus = {
         instanceId,
         status: 'connected' as const,
-        serviceStatus: status.serviceStatus,
-        mappings: status.mappings,
+        serviceStatus: status,
         lastUpdateAt: Date.now()
       };
 
@@ -286,9 +279,7 @@ export class InstanceManager {
       return result;
     } catch (error) {
       // 超时或失败时，尝试返回缓存的状态（如果有）
-      if ((timeoutPromise as any)._timer) {
-        clearTimeout((timeoutPromise as any)._timer);
-      }
+      if (timeoutTimer) clearTimeout(timeoutTimer);
 
       if (cached && cacheAge < this.STATUS_CACHE_TTL * 3) {
         logger.warn(`Status fetch failed for ${instanceId}, returning stale cache`, {
@@ -398,6 +389,19 @@ export class InstanceManager {
       return adapter.getDockerContainers();
     }
     return [];
+  }
+
+  async createDockerContainer(instanceId: string, input: CreateFrpcContainerInput): Promise<DockerContainerInfo> {
+    const instance = this.instances.get(instanceId);
+    if (!instance) throw new Error('Instance not found');
+    if (instance.connectionType !== 'remote_ssh') {
+      throw new Error('Docker containers can only be created on remote SSH servers');
+    }
+    const adapter = this.getAdapter(instanceId);
+    if (!adapter.createDockerContainer) throw new Error('This connection does not support creating Docker containers');
+    const container = await adapter.createDockerContainer(input);
+    await this.discoverDockerContainers(instanceId, container.name);
+    return container;
   }
 
   async discoverDockerContainers(instanceId: string, selectedContainerName?: string): Promise<DockerDiscoveryResult> {

@@ -95,6 +95,17 @@ export interface DockerDiscoveryResult {
   selectedContainerName?: string;
 }
 
+export interface CreateFrpcContainerInput {
+  name: string;
+  image: string;
+  serverAddr: string;
+  serverPort: number;
+  authToken?: string;
+  hostConfigPath: string;
+  containerConfigPath: string;
+  restartPolicy: 'no' | 'always' | 'unless-stopped' | 'on-failure';
+}
+
 export interface InstanceStatus {
   instanceId: string;
   status: 'connected' | 'disconnected' | 'error';

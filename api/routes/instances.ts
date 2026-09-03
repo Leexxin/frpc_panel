@@ -1,6 +1,6 @@
 import { Router, type Request, type Response, type NextFunction } from 'express';
 import { InstanceManager } from '../services/instanceManager.js';
-import { FrpcInstance, ConnectionType, PortMapping, LogEntry, ConfigFile, ApiResponse, DockerContainerInfo, DockerDiscoveryResult } from '../../shared/types.js';
+import { FrpcInstance, ConnectionType, PortMapping, LogEntry, ConfigFile, ApiResponse, DockerContainerInfo, DockerDiscoveryResult, CreateFrpcContainerInput, InstanceStatus } from '../../shared/types.js';
 import { logger } from '../utils/logger.js';
 
 const router = Router();
@@ -80,7 +80,7 @@ router.get('/status', async (req: Request, res: Response, next: NextFunction): P
   try {
     const forceRefresh = req.query.force === 'true';
     const statuses = await instanceManager.getAllStatuses(forceRefresh);
-    const response: ApiResponse<any[]> = { success: true, data: statuses };
+    const response: ApiResponse<InstanceStatus[]> = { success: true, data: statuses };
     res.json(response);
   } catch (error) {
     logger.error('Failed to get instance statuses', { error: (error as Error).message });
@@ -193,7 +193,7 @@ router.get('/:id/status', async (req: Request, res: Response, next: NextFunction
   try {
     const forceRefresh = req.query.force === 'true';
     const status = await instanceManager.getInstanceStatus(req.params.id, 8000, forceRefresh);
-    const response: ApiResponse<any> = { success: true, data: status };
+    const response: ApiResponse<InstanceStatus> = { success: true, data: status };
     res.json(response);
   } catch (error) {
     logger.error('Failed to get instance status', { error: (error as Error).message, instanceId: req.params.id });
@@ -369,6 +369,32 @@ router.get('/:id/docker/containers', async (req: Request, res: Response, next: N
   } catch (error) {
     logger.error('Failed to get docker containers', { error: (error as Error).message, instanceId: req.params.id });
     next(error);
+  }
+});
+
+router.post('/:id/docker/containers', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const input = req.body as Partial<CreateFrpcContainerInput>;
+    if (!input.name || !input.image || !input.serverAddr || !input.hostConfigPath || !input.containerConfigPath) {
+      res.status(400).json({ success: false, error: 'name, image, serverAddr, hostConfigPath and containerConfigPath are required' });
+      return;
+    }
+    const container = await instanceManager.createDockerContainer(req.params.id, {
+      name: input.name,
+      image: input.image,
+      serverAddr: input.serverAddr,
+      serverPort: Number(input.serverPort || 7000),
+      authToken: input.authToken,
+      hostConfigPath: input.hostConfigPath,
+      containerConfigPath: input.containerConfigPath,
+      restartPolicy: input.restartPolicy || 'unless-stopped',
+    });
+    const response: ApiResponse<DockerContainerInfo> = { success: true, data: container };
+    res.status(201).json(response);
+  } catch (error) {
+    const message = (error as Error).message;
+    logger.error('Failed to create frpc Docker container', { error: message, instanceId: req.params.id });
+    res.status(400).json({ success: false, error: message });
   }
 });
 

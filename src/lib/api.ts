@@ -1,4 +1,4 @@
-import { PortMapping, ConfigFile, ApiResponse, LogEntry, FrpcInstance, ConnectionType, ConnectionConfig, InstanceStatus, DockerContainerInfo, DockerDiscoveryResult } from '../../shared/types'
+import { PortMapping, ConfigFile, ApiResponse, LogEntry, FrpcInstance, ConnectionType, ConnectionConfig, InstanceStatus, DockerContainerInfo, DockerDiscoveryResult, CreateFrpcContainerInput } from '../../shared/types'
 
 const API_BASE = '/api'
 
@@ -98,6 +98,11 @@ export const api = {
   getInstanceConfig: (instanceId: string) => request<ConfigFile>(`/instances/${instanceId}/config`),
   getInstanceLogs: (instanceId: string, lines?: number) => request<LogEntry[]>(`/instances/${instanceId}/logs?lines=${lines || 100}`),
   getInstanceDockerContainers: (instanceId: string) => request<DockerContainerInfo[]>(`/instances/${instanceId}/docker/containers`),
+  createInstanceDockerContainer: (instanceId: string, input: CreateFrpcContainerInput) =>
+    request<DockerContainerInfo>(`/instances/${instanceId}/docker/containers`, {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }),
   discoverInstanceDockerContainers: (instanceId: string, containerName?: string) =>
     request<DockerDiscoveryResult>(`/instances/${instanceId}/docker/discover`, {
       method: 'POST',
