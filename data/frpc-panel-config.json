@@ -1,6 +1,0 @@
-{
-  "deploymentType": "docker",
-  "configPath": "/Users/lixin/dev/projects/我的项目/frpc_panel/frpc.toml",
-  "frpcPath": "",
-  "dockerContainerName": "frpc"
-}
