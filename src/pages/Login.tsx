@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { auth } from '../lib/api'
-import { Shield, Eye, EyeOff, AlertCircle } from 'lucide-react'
+import { Eye, EyeOff, AlertCircle } from 'lucide-react'
 
 export function Login() {
   const navigate = useNavigate()
@@ -37,13 +37,11 @@ export function Login() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-900 via-blue-800 to-cyan-700 flex items-center justify-center px-4">
+    <div className="relative min-h-screen bg-gradient-to-br from-blue-900 via-blue-800 to-cyan-700 flex items-center justify-center px-4 pb-16">
       <div className="bg-white rounded-2xl shadow-2xl p-8 w-full max-w-md">
         <div className="text-center mb-8">
-          <div className="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4">
-            <Shield className="w-8 h-8 text-blue-600" />
-          </div>
-          <h1 className="text-2xl font-bold text-gray-900">frpc 管理面板</h1>
+          <img src="/favicon.svg" alt="FRPC Control" className="w-16 h-16 rounded-2xl shadow-lg mx-auto mb-4" />
+          <h1 className="text-2xl font-bold text-gray-900 tracking-wide">FRPC Control</h1>
           <p className="text-gray-500 mt-2">请输入管理员密码登录</p>
         </div>
 
@@ -88,6 +86,7 @@ export function Login() {
           </button>
         </form>
       </div>
+      <p className="absolute bottom-6 text-sm text-blue-100/80">FRPC Control · Developed by Lixin</p>
     </div>
   )
 }

@@ -1,5 +1,6 @@
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom'
 import { Navbar } from './components/Navbar'
+import { Footer } from './components/Footer'
 import { Login } from './pages/Login'
 import { Instances } from './pages/Instances'
 import { InstanceDetail } from './pages/InstanceDetail'
@@ -18,13 +19,16 @@ export default function App() {
           path="/*"
           element={
             <PrivateRoute>
-              <div className="min-h-screen">
+              <div className="min-h-screen flex flex-col bg-gray-50">
                 <Navbar />
-                <Routes>
-                  <Route path="/" element={<Navigate to="/instances" replace />} />
-                  <Route path="/instances" element={<Instances />} />
-                  <Route path="/instances/:instanceId" element={<InstanceDetail />} />
-                </Routes>
+                <main className="flex-1">
+                  <Routes>
+                    <Route path="/" element={<Navigate to="/instances" replace />} />
+                    <Route path="/instances" element={<Instances />} />
+                    <Route path="/instances/:instanceId" element={<InstanceDetail />} />
+                  </Routes>
+                </main>
+                <Footer />
               </div>
             </PrivateRoute>
           }

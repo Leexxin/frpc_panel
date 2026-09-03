@@ -1,4 +1,19 @@
-<svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
-<rect width="32" height="32" fill="#0A0B0D"/>
-<path d="M26.6677 23.7149H8.38057V20.6496H5.33301V8.38159H26.6677V23.7149ZM8.38057 20.6496H23.6201V11.4482H8.38057V20.6496ZM16.0011 16.0021L13.8461 18.1705L11.6913 16.0021L13.8461 13.8337L16.0011 16.0021ZM22.0963 16.0008L19.9414 18.1691L17.7865 16.0008L19.9414 13.8324L22.0963 16.0008Z" fill="#32F08C"/>
+<svg width="64" height="64" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="8" y1="4" x2="56" y2="60" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#164E86"/>
+      <stop offset="1" stop-color="#0891B2"/>
+    </linearGradient>
+    <linearGradient id="flow" x1="16" y1="32" x2="48" y2="32" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#A5F3FC"/>
+      <stop offset="1" stop-color="white"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="15" fill="url(#bg)"/>
+  <rect x="12.5" y="16.5" width="17" height="13" rx="3.5" stroke="white" stroke-width="3"/>
+  <rect x="34.5" y="34.5" width="17" height="13" rx="3.5" stroke="white" stroke-width="3"/>
+  <path d="M21 30V36C21 39.3137 23.6863 42 27 42H34" stroke="url(#flow)" stroke-width="4" stroke-linecap="round"/>
+  <path d="M29 42L34 37V47L29 42Z" fill="white"/>
+  <circle cx="18" cy="23" r="1.8" fill="#A5F3FC"/>
+  <circle cx="40" cy="41" r="1.8" fill="#A5F3FC"/>
 </svg>

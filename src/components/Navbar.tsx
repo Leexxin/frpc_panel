@@ -13,8 +13,12 @@ export function Navbar() {
     <nav className="bg-gradient-to-r from-blue-900 to-cyan-700 text-white shadow-lg">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-16">
-          <div className="flex items-center">
-            <h1 className="text-xl font-bold">frpc 管理面板</h1>
+          <div className="flex items-center gap-3">
+            <img src="/favicon.svg" alt="" className="w-9 h-9 rounded-lg shadow-sm" />
+            <div>
+              <h1 className="text-lg font-bold leading-tight tracking-wide">FRPC Control</h1>
+              <p className="text-[11px] text-cyan-100/80 leading-tight">远程客户端管理</p>
+            </div>
           </div>
           <div className="flex items-center space-x-4">
             {navItems.map((item) => {
